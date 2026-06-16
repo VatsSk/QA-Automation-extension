@@ -3,6 +3,13 @@
   "name": "Smart QA Test Case Creator",
   "version": "1.0.0",
   "description": "Persistent QA test run recorder with smart element capture",
+   "externally_connectable": {
+    "matches": [
+      "http://localhost:8080/*",
+      "http://localhost:8088/*",
+      "http://3.7.136.248:8088/*"
+    ]
+  },
 
   "permissions": [
     "activeTab",

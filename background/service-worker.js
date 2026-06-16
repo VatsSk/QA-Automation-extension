@@ -61,6 +61,34 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
+// ── Listen for messages from external sources (e.g. spring boot application) ─────────────────
+chrome.runtime.onMessageExternal.addListener(
+  (msg, sender, sendResponse) => {
+
+    console.log("External message:", msg);
+
+    switch (msg.action) {
+
+      case 'START_RECORDING':
+
+        chrome.storage.local.set({
+          projectId: msg.projectId,
+          moduleId: msg.moduleId,
+          createdBy: msg.createdBy
+        });
+
+        sendResponse({
+          success: true
+        });
+
+        break;
+    }
+
+    return true;
+  }
+);
+
+
 // ── Message bus ──────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {

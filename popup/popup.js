@@ -1018,11 +1018,18 @@ function refreshJsonPreview() {
 }
 
 // ── Build payload ─────────────────────────────────────────────────────────────
-function buildPayload() {
+async function buildPayload() {
+  const result = await chrome.storage.local.get([
+    "projectId",
+    "moduleId",
+    "createdBy"
+  ]);
   return {
     runName: state.runName,
     runType: state.runType,
-    createdBy: 'QA_EXTENSION',
+    createdBy: result.createdBy,
+    projectId: result.projectId,
+    moduleId: result.moduleId,
     tags: state.tags.split(',').map(t => t.trim()).filter(Boolean),
     resultStatement: state.resultStatement,
     scenariosList: state.scenarios.map((sc, i) => {
@@ -1102,7 +1109,7 @@ async function saveRun() {
     return;
   }
 
-  const payload = buildPayload();
+  const payload = await buildPayload();
   const btn = document.getElementById('btn-save-run');
   btn.disabled = true;
   btn.textContent = 'Saving…';
