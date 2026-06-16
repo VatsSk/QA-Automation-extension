@@ -90,7 +90,6 @@ async function restoreState() {
     if (!projectId && extra.projectId) {
       projectId = extra.projectId;
     } else if (projectId) {
-      // If we have it in URL, save it to storage for next time
       await Storage.set({ projectId });
     }
 
@@ -117,7 +116,8 @@ function normalizeState() {
     if (!Array.isArray(sc.assertions)) sc.assertions = [];
     if (!Array.isArray(sc.filters)) sc.filters = [];
     if (!Array.isArray(sc.columns)) sc.columns = [];
-    if (!sc.dateRange) sc.dateRange = { preset: 'this_week', custom: null };
+    if (!sc.dateRange) sc.dateRange = { preset: 'THIS_WEEK', custom: null };
+    else if (sc.dateRange.preset) sc.dateRange.preset = String(sc.dateRange.preset).toUpperCase();
     if (!Array.isArray(sc.csvUploads)) sc.csvUploads = [];
   });
   if (state.activeScenarioIdx >= state.scenarios.length) {
@@ -205,7 +205,8 @@ function bindActionBar() {
   });
 
   document.getElementById('btn-copy-payload').addEventListener('click', async () => {
-    await navigator.clipboard.writeText(JSON.stringify(buildPayload(), null, 2));
+    const payload = await buildPayload();
+    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
     showToast('Copied!', 'success');
   });
 }
@@ -242,14 +243,15 @@ function refreshJsonIfOpen() {
 
 // ── Scenario management ───────────────────────────────────────────────────────
 function addScenario() {
+  const isFirst = state.scenarios.length === 0;
   const sc = {
     id: Date.now(),
-    type: 'URL',
+    type: isFirst ? 'URL_NAV' : 'URL',
     fields: {},
     assertions: [],
     filters: [],
     columns: [],
-    dateRange: { preset: 'this_week', custom: null },
+    dateRange: { preset: 'THIS_WEEK', custom: null },
     csvUploads: []
   };
   state.scenarios.push(sc);
@@ -582,18 +584,18 @@ function renderCsvUploadBuilder(sc) {
       const row = document.createElement('div');
       row.className = 'csv-upload-item';
 
-      const lines = item.content ? item.content.split(/\r?\n/).filter(Boolean).length : 0;
       const kb = item.size ? (item.size / 1024).toFixed(1) : '0.0';
 
       row.innerHTML = `
         <div class="csv-upload-name" title="${escAttr(item.name)}">${escHtml(item.name)}</div>
         <div class="csv-upload-meta">${kb} KB</div>
-        <div class="csv-upload-preview">${lines} lines</div>
+        <div class="csv-upload-preview">Linked</div>
         <button class="csv-upload-remove" title="Remove CSV">✕</button>
       `;
 
       row.querySelector('.csv-upload-remove').addEventListener('click', () => {
         sc.csvUploads.splice(index, 1);
+        sc.csv = '';
         render();
         persistState();
       });
@@ -620,11 +622,7 @@ async function addCsvFilesToScenario(sc, files) {
         authToken
       });
       
-      // The backend returns an 'UploadResponse' with a 'path' field.
-      // We store this in the scenario's 'csv' field.
       sc.csv = res.path;
-      
-      // Update local UI state for listing
       sc.csvUploads = [{
         id: res.path,
         name: file.name,
@@ -639,15 +637,6 @@ async function addCsvFilesToScenario(sc, files) {
       showToast(`Upload failed: ${e.message}`, 'error');
     }
   }
-}
-
-function readFileText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
 }
 
 function renderAssertionBuilder(sc) {
@@ -759,7 +748,7 @@ function renderFiltersBuilder(sc) {
 }
 
 function renderDateRangeBuilder(sc) {
-  if (!sc.dateRange) sc.dateRange = { preset: 'this_week', custom: null };
+  if (!sc.dateRange) sc.dateRange = { preset: 'THIS_WEEK', custom: null };
   const wrap = document.createElement('div');
   wrap.className = 'sub-builder';
   wrap.innerHTML = `
@@ -769,10 +758,11 @@ function renderDateRangeBuilder(sc) {
     <div class="sub-row">
       <label style="color:var(--text-sec);font-size:11px;min-width:50px">Preset</label>
       <select style="flex:1">
-        ${DATE_PRESETS.map(p => `<option value="${p}"${sc.dateRange.preset === p ? ' selected' : ''}>${p.replace(/_/g, ' ')}</option>`).join('')}
+        ${Object.values(DATE_PRESET_TYPES).map(p => `<option value="${p.value}"${sc.dateRange.preset === p.value ? ' selected' : ''}>${p.label}</option>`).join('')}
+        <option value="CUSTOM_RANGE"${sc.dateRange.preset === 'CUSTOM_RANGE' ? ' selected' : ''}>Custom Range</option>
       </select>
     </div>
-    <div id="custom-range-row" class="sub-row" style="${sc.dateRange.preset !== 'custom' ? 'display:none' : ''}">
+    <div id="custom-range-row" class="sub-row" style="${sc.dateRange.preset !== 'CUSTOM_RANGE' ? 'display:none' : ''}">
       <input type="date" placeholder="Start" value="${sc.dateRange.custom?.start || ''}">
       <span style="color:var(--text-sec)">→</span>
       <input type="date" placeholder="End" value="${sc.dateRange.custom?.end || ''}">
@@ -785,7 +775,7 @@ function renderDateRangeBuilder(sc) {
 
   sel.addEventListener('change', () => {
     sc.dateRange.preset = sel.value;
-    customRow.style.display = sel.value === 'custom' ? '' : 'none';
+    customRow.style.display = sel.value === 'CUSTOM_RANGE' ? '' : 'none';
     persistState();
     refreshJsonIfOpen();
   });
@@ -826,7 +816,7 @@ function renderColumnsBuilder(sc) {
       row.className = 'sub-row';
       row.innerHTML = `
         <input type="text" placeholder="Column name" style="flex:1.5" value="${escAttr(col.name || '')}">
-        <select>${MANAGE_COLUMN_ACTIONS.map(a => `<option value="${a}"${col.action === a ? ' selected' : ''}>${a}</option>`).join('')}</select>
+        <select>${MANAGE_COLUMN_ACTIONS.map(a => `<option value="${a.value}"${col.action === a.value ? ' selected' : ''}>${a.label}</option>`).join('')}</select>
         <input type="number" placeholder="Position" style="width:70px" value="${col.position ?? ''}">
         <button class="sub-remove">✕</button>
       `;
@@ -849,7 +839,7 @@ function renderColumnsBuilder(sc) {
   renderRows();
 
   wrap.querySelector('.sub-builder-add').addEventListener('click', () => {
-    sc.columns.push({ name: '', action: 'show', position: null });
+    sc.columns.push({ name: '', action: 'SHOW', position: null });
     renderRows();
     persistState();
   });
@@ -1011,82 +1001,99 @@ function applyToActiveField(type, value) {
 }
 
 // ── JSON preview ──────────────────────────────────────────────────────────────
-function refreshJsonPreview() {
+async function refreshJsonPreview() {
   const pre = document.getElementById('payload-content');
   if (!pre) return;
-  pre.textContent = JSON.stringify(buildPayload(), null, 2);
+  try {
+    const payload = await buildPayload();
+    pre.textContent = JSON.stringify(payload, null, 2);
+  } catch (e) {
+    pre.textContent = 'Error building preview: ' + e.message;
+  }
 }
 
 // ── Build payload ─────────────────────────────────────────────────────────────
 async function buildPayload() {
-  const result = await chrome.storage.local.get([
-    "projectId",
-    "moduleId",
-    "createdBy"
-  ]);
+  const result = await chrome.storage.local.get(null);
+  console.log('[QA Debug] All Storage Keys:', result);
+
+  const prependedScenario = {
+    sequenceNo: 1,
+    type: 'URL_NAV',
+    url: result.url || '',
+    cssOpener: '',
+    value: '',
+    clickCss: '',
+    applyFilterBtn: '',
+    saveBtnCss: '',
+    csv: result.csvPath || '',
+    statement: '',
+    assertions: [],
+    filters: [],
+    dateRangeNavDto: null,
+    columns: []
+  };
+  console.log('[QA Debug] Prepend Scenario:', prependedScenario);
+
+  const userScenarios = state.scenarios.map((sc, i) => {
+    const f = sc.fields || {};
+
+    return {
+      sequenceNo: i + 2,
+      type: sc.type,
+      url: f.url || '',
+      cssOpener: f.cssSelector || '',
+      value: f.value || '',
+      clickCss: f.clickCss || '',
+      applyFilterBtn: f.applyFilterBtn || '',
+      saveBtnCss: f.saveBtnCss || '',
+      csv: sc.csv || '',
+      statement: f.statement || '',
+
+      assertions: Array.isArray(sc.assertions) ? sc.assertions.map(a => ({
+        type: a.type,
+        locator: a.locator,
+        expectedValue: a.expectedValue
+      })) : [],
+
+      filters: Array.isArray(sc.filters) ? sc.filters.map(fl => ({
+        locator: fl.locator,
+        filterType: fl.filterType,
+        value: fl.value
+      })) : [],
+
+      dateRangeNavDto: sc.dateRange ? {
+        preset: String(sc.dateRange.preset || 'THIS_WEEK').toUpperCase(),
+        startDate: sc.dateRange.custom?.start || null,
+        endDate: sc.dateRange.custom?.end || null
+      } : null,
+
+      columns: Array.isArray(sc.columns) ? sc.columns.map(col => ({
+        name: col.name,
+        action: col.action,
+        position: col.position
+      })) : []
+    };
+  });
+
   return {
     runName: state.runName,
     runType: state.runType,
-    createdBy: result.createdBy,
+    createdBy: result.createdBy || 'user',
     projectId: result.projectId,
     moduleId: result.moduleId,
     tags: state.tags.split(',').map(t => t.trim()).filter(Boolean),
     resultStatement: state.resultStatement,
-    scenariosList: state.scenarios.map((sc, i) => {
-      const f = sc.fields || {};
-      
-      return {
-        sequenceNo: i + 1,
-        type: sc.type, // Assumes sc.type (e.g. 'URL', 'ASSERT') matches ScenarioType enum
-        url: f.url || '',
-        cssOpener: f.cssSelector || '',
-        value: f.value || '',
-        clickCss: f.clickCss || '',
-        applyFilterBtn: f.applyFilterBtn || '', // use the mapped field if available
-        saveBtnCss: f.saveBtnCss || '',
-        csv: sc.csv || '', // S3 path from the upload API
-
-        // Assertions
-        assertions: Array.isArray(sc.assertions) ? sc.assertions.map(a => ({
-          type: a.type,
-          locator: a.locator,
-          expectedValue: a.expectedValue
-        })) : [],
-
-        // Filters
-        filters: Array.isArray(sc.filters) ? sc.filters.map(fl => ({
-          locator: fl.locator,
-          filterType: fl.filterType,
-          value: fl.value
-        })) : [],
-
-        // Date Range
-        dateRangeNavDto: sc.dateRange ? {
-          preset: sc.dateRange.preset,
-          startDate: sc.dateRange.custom?.start || null,
-          endDate: sc.dateRange.custom?.end || null
-        } : null,
-
-        // Columns
-        columns: Array.isArray(sc.columns) ? sc.columns.map(col => ({
-          name: col.name,
-          action: col.action,
-          position: col.position
-        })) : []
-      };
-    })
+    scenariosList: [prependedScenario, ...userScenarios]
   };
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
 function validate() {
   const errors = [];
-  // if (!projectId || !moduleId) {
-  //   errors.push('Missing Project ID or Module ID. Please open from the QA platform.');
-  // }
-  projectId==123; // Temporary hardcoded value for testing
-    moduleId==456;
-    authToken=='test-token';  
+  if (!projectId || !moduleId) {
+    errors.push('Missing Project ID or Module ID. Please open from the QA platform.');
+  }
   if (!state.runName.trim()) errors.push('Run Name is required');
 
   state.scenarios.forEach((sc, i) => {
@@ -1110,6 +1117,7 @@ async function saveRun() {
   }
 
   const payload = await buildPayload();
+  console.log('[QA] Saving run payload:', payload);
   const btn = document.getElementById('btn-save-run');
   btn.disabled = true;
   btn.textContent = 'Saving…';
@@ -1119,7 +1127,7 @@ async function saveRun() {
     await Storage.clear();
     showToast('Run saved!', 'success');
     setSaveStatus('● Saved', 'saved');
-    setTimeout(() => window.close(), 1200);
+    // setTimeout(() => window.close(), 1200);
   } catch (e) {
     showToast(`Save failed: ${e.message}`, 'error');
     btn.disabled = false;

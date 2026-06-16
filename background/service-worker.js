@@ -74,7 +74,9 @@ chrome.runtime.onMessageExternal.addListener(
         chrome.storage.local.set({
           projectId: msg.projectId,
           moduleId: msg.moduleId,
-          createdBy: msg.createdBy
+          createdBy: msg.createdBy,
+          url: msg.url,
+          csvPath: msg.csvPath
         });
 
         sendResponse({
