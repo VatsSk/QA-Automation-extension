@@ -1,0 +1,142 @@
+/* ─── overlay.css ─────────────────────────────────────────────────────────── */
+
+#qa-overlay-highlight {
+  position: fixed;
+  pointer-events: none;
+  z-index: 2147483646;
+  border: 2px solid #4f9cf9;
+  border-radius: 3px;
+  background: rgba(79, 156, 249, 0.08);
+  box-shadow: 0 0 0 1px rgba(79,156,249,0.4), inset 0 0 0 1px rgba(79,156,249,0.2);
+  transition: all 0.08s ease;
+}
+
+#qa-overlay-highlight.capture-value {
+  border-color: #34d399;
+  background: rgba(52, 211, 153, 0.08);
+  box-shadow: 0 0 0 1px rgba(52,211,153,0.4), inset 0 0 0 1px rgba(52,211,153,0.2);
+}
+
+#qa-overlay-highlight.capture-both {
+  border-color: #a78bfa;
+  background: rgba(167, 139, 250, 0.08);
+  box-shadow: 0 0 0 1px rgba(167,139,250,0.4), inset 0 0 0 1px rgba(167,139,250,0.2);
+}
+
+/* ── Tooltip ─────────────────────────────────────────────────────────────── */
+#qa-tooltip {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  font-family: 'SF Mono', 'JetBrains Mono', 'Fira Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 360px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  white-space: nowrap;
+}
+
+#qa-tooltip .qa-tt-tag {
+  color: #79c0ff;
+  font-weight: 700;
+  font-size: 12px;
+}
+#qa-tooltip .qa-tt-id {
+  color: #ffa657;
+}
+#qa-tooltip .qa-tt-class {
+  color: #a5d6ff;
+}
+#qa-tooltip .qa-tt-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin: 1px 0;
+  overflow: hidden;
+}
+#qa-tooltip .qa-tt-label {
+  color: #8b949e;
+  min-width: 80px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+#qa-tooltip .qa-tt-val {
+  color: #e6edf3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+#qa-tooltip .qa-tt-val.locator {
+  color: #56d364;
+  font-size: 10.5px;
+}
+#qa-tooltip .qa-tt-val.value {
+  color: #f0883e;
+}
+#qa-tooltip .qa-tt-val.aria {
+  color: #d2a8ff;
+}
+#qa-tooltip .qa-tt-score {
+  display: inline-block;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+  margin-left: 4px;
+  color: #56d364;
+}
+#qa-tooltip .qa-tt-divider {
+  border: none;
+  border-top: 1px solid #21262d;
+  margin: 6px 0;
+}
+#qa-tooltip .qa-tt-header {
+  margin: 0 0 5px 0;
+  font-size: 10px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Capture-mode cursor on the whole page ───────────────────────────────── */
+body.qa-capturing {
+  cursor: crosshair !important;
+}
+body.qa-capturing * {
+  cursor: crosshair !important;
+}
+
+/* ── Banner shown at top of page during capture ──────────────────────────── */
+#qa-capture-banner {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 2147483645;
+  padding: 8px 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  color: #fff;
+  background: #1a1f2e;
+  border-bottom: 2px solid #4f9cf9;
+  letter-spacing: 0.02em;
+}
+#qa-capture-banner.mode-value   { border-color: #34d399; }
+#qa-capture-banner.mode-both    { border-color: #a78bfa; }
+#qa-capture-banner kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  font-size: 11px;
+  margin: 0 2px;
+}

@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Smart QA Test Case Creator",
+  "version": "1.0.0",
+  "description": "Persistent QA test run recorder with smart element capture",
+
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs",
+    "windows"
+  ],
+
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+
+  "action": {
+    "default_title": "Open QA Recorder",
+    "default_icon": {
+      "16": "assets/icon16.png",
+      "32": "assets/icon32.png",
+      "48": "assets/icon48.png",
+      "128": "assets/icon128.png"
+    }
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": ["popup/popup.html", "popup/popup.css", "popup/popup.js",
+                    "scenario-builder/schema.js", "storage/storage.js",
+                    "api/api-client.js", "assets/*.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
+  "content_scripts": [],
+
+  "icons": {
+    "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  }
+}
