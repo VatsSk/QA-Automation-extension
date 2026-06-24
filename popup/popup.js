@@ -24,10 +24,14 @@ const CSV_SCENARIO_TYPES = new Set(['URL', 'MODAL', 'FORM_MODAL']);
 
 // URL params
 const params = new URLSearchParams(location.search);
-let projectId = params.get('projectId') || null;
-let moduleId = params.get('moduleId') || null;
-let authToken = params.get('authToken') || null;
+let projectId   = params.get('projectId') || null;
+let moduleId    = params.get('moduleId')   || null;
+let authToken   = params.get('authToken')  || null;
 let targetTabId = parseInt(params.get('tabId')) || null;
+
+// Backend-set values (propagated into URL scenarios automatically)
+let storageUrl     = '';
+let storageCsvPath = '';
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -84,8 +88,8 @@ async function restoreState() {
       showToast('Draft restored', 'success');
     }
 
-    // Restore projectId/moduleId from storage if not in URL
-    const extra = await Storage.get(['projectId', 'moduleId', 'authToken']);
+    // Restore projectId/moduleId/authToken from storage if not in URL
+    const extra = await Storage.get(['projectId', 'moduleId', 'authToken', 'url', 'csvPath']);
 
     if (!projectId && extra.projectId) {
       projectId = extra.projectId;
@@ -104,6 +108,10 @@ async function restoreState() {
     } else if (authToken) {
       await Storage.set({ authToken });
     }
+
+    // Cache backend-provided URL and CSV path for URL-type scenarios
+    if (extra.url)     storageUrl     = extra.url;
+    if (extra.csvPath) storageCsvPath = extra.csvPath;
   } catch (e) {
     console.warn('[QA] Could not restore state:', e);
   }
@@ -248,7 +256,7 @@ function addScenario() {
   const isFirst = state.scenarios.length === 0;
   const sc = {
     id: Date.now(),
-    type: isFirst ? 'URL_NAV' : 'URL',
+    type: isFirst ? 'URL' : 'URL_NAV',
     fields: {},
     assertions: [],
     filters: [],
@@ -407,14 +415,17 @@ function renderActiveScenario() {
   const scType = String(sc.type).toUpperCase();
 
   if (scType === 'URL') {
-    // 1. URL field
-    const urlField = renderScenarioField(sc, 'url');
-    if (urlField) form.appendChild(urlField);
-    // 2. Initial Verification (after URL)
+    // URL with data — URL + CSV both from storage
+    sc.fields.url = storageUrl;
+    sc.csv        = storageCsvPath;
+
+    // 1. Read-only info panel (URL + CSV)
+    form.appendChild(renderStorageInfoPanel(true));
+    // 2. Initial Verification
     form.appendChild(renderVerificationBuilder(sc, 'initial', 'Initial Verification'));
-    // 3. CSV section
+    // 3. CSV upload section
     form.appendChild(renderCsvUploadBuilder(sc));
-    // 4. Final Verification (after CSV)
+    // 4. Final Verification
     form.appendChild(renderVerificationBuilder(sc, 'final', 'Final Verification'));
 
   } else if (scType === 'FORM_MODAL') {
@@ -453,6 +464,31 @@ function renderActiveScenario() {
 
   body.innerHTML = '';
   body.appendChild(form);
+}
+
+// ── Storage info panel (read-only, used by URL / URL_NAV scenarios) ──────────
+function renderStorageInfoPanel(showCsv = false) {
+  const panel = document.createElement('div');
+  panel.className = 'storage-info-panel';
+  panel.innerHTML = `
+    <div class="sip-row">
+      <span class="sip-icon">🔗</span>
+      <div class="sip-content">
+        <span class="sip-label">URL</span>
+        <span class="sip-value" title="${escAttr(storageUrl)}">${escHtml(storageUrl || '(not set by backend)')}</span>
+      </div>
+    </div>
+    ${showCsv && storageCsvPath ? `
+    <div class="sip-row">
+      <span class="sip-icon">📄</span>
+      <div class="sip-content">
+        <span class="sip-label">CSV</span>
+        <span class="sip-value" title="${escAttr(storageCsvPath)}">${escHtml(storageCsvPath)}</span>
+      </div>
+    </div>` : ''}
+    <p class="sip-note">⚙ Set by backend · cannot be edited here</p>
+  `;
+  return panel;
 }
 
 function renderScenarioField(sc, key) {
@@ -1185,90 +1221,124 @@ async function refreshJsonPreview() {
     pre.textContent = 'Error building preview: ' + e.message;
   }
 }
-
 // ── Build payload ─────────────────────────────────────────────────────────────
 async function buildPayload() {
   const result = await chrome.storage.local.get(null);
   console.log('[QA Debug] All Storage Keys:', result);
 
-  const prependedScenario = {
-    sequenceNo: 1,
-    type: 'URL_NAV',
-    url: result.url || '',
-    cssOpener: '',
-    value: '',
-    clickCss: '',
-    applyFilterBtn: '',
-    saveBtnCss: '',
-    csv: result.csvPath || '',
-    statement: '',
-    assertions: [],
-    filters: [],
-    dateRangeNavDto: null,
-    columns: []
-  };
-  console.log('[QA Debug] Prepend Scenario:', prependedScenario);
+  const scenariosList = (state.scenarios || []).map((s, i) => {
+    const typeConfig = TYPES[s.type] || {};
+    const allowedFields = typeConfig.fields || [];
 
-  const userScenarios = state.scenarios.map((sc, i) => {
-    const f = sc.fields || {};
+    const base = {
+      id: s.id || undefined,
+      type: s.type,
+      sequenceNo: i + 1,
 
-    return {
-      sequenceNo: i + 2,
-      type: sc.type,
-      url: f.url || '',
-      cssOpener: f.cssSelector || '',
-      value: f.value || '',
-      clickCss: f.clickCss || '',
-      applyFilterBtn: f.applyFilterBtn || '',
-      saveBtnCss: f.saveBtnCss || '',
-      csv: sc.csv || '',
-      statement: f.statement || '',
+      // always allowed (common fields)
+      url: allowedFields.includes('url') ? ((s.fields && s.fields.url) || null) : undefined,
+      cssOpener: allowedFields.includes('cssSelector') ? ((s.fields && s.fields.cssSelector) || null) : undefined,
+      value: allowedFields.includes('value') ? ((s.fields && s.fields.value) || null) : undefined,
+      clickCss: allowedFields.includes('clickCss') ? ((s.fields && s.fields.clickCss) || null) : undefined,
 
-      assertions: Array.isArray(sc.assertions) ? sc.assertions.map(a => ({
-        type: a.type,
-        locator: a.locator,
-        expectedValue: a.expectedValue
-      })) : [],
-
-      filters: Array.isArray(sc.filters) ? sc.filters.map(fl => ({
-        locator: fl.locator,
-        filterType: fl.filterType,
-        value: fl.value
-      })) : [],
-
-      dateRangeNavDto: sc.dateRange ? {
-        preset: String(sc.dateRange.preset || 'THIS_WEEK').toUpperCase(),
-        startDate: sc.dateRange.custom?.start || null,
-        endDate: sc.dateRange.custom?.end || null
-      } : null,
-
-      columns: Array.isArray(sc.columns) ? sc.columns.map(col => ({
-        name: col.name,
-        action: col.action,
-        position: col.position
-      })) : [],
-
-      initialVerify: Array.isArray(sc.initialVerifications) ? sc.initialVerifications.map(v => ({
-        cssSelector: v.locator,
-        expectedResult: v.value
-      })) : [],
-
-      finalVerify: Array.isArray(sc.finalVerifications) ? sc.finalVerifications.map(v => ({
-        cssSelector: v.locator,
-        expectedResult: v.value
-      })) : []
+      csv: typeConfig.hasData ? (s.csv || result.csvPath || null) : undefined,
+      scenarioBasePath: s.scenarioBasePath || null
     };
+
+    // ─── ASSERT ─────────────────────────────────────────────
+    if (s.type === 'ASSERT') {
+      base.assertions = (s.assertions || []).map(a => ({
+        type: a.type || null,
+        locator: a.locator || null,
+        expected: a.expected || null,
+        tableId: a.tableId || null,
+        columnName: a.columnName || null,
+        order: a.order || null,
+        rowsBtn: a.rowsBtn || null,
+        prompt: a.promptAi || null
+      }));
+    }
+
+    // ─── FILTER NAV ─────────────────────────────────────────
+    if (s.type === 'FILTER_NAV') {
+      base.applyFilterBtn = s.applyBtnCss || null;
+
+      base.filters = (s.filters || []).map(f => {
+        let finalValue = f.value;
+
+        if (f.operation === 'RANGE') {
+          const start = f.value?.start;
+          const end = f.value?.end;
+          if (start && end) {
+            finalValue = formatRange(start, end, f.filterType);
+          }
+        }
+
+        return {
+          querySelector: f.querySelectorOfColName || null,
+          filterType: f.filterType || null,
+          operation: f.operation || null,
+          value: finalValue ?? null,
+          valueSelector: f.searchCssSelector || null,
+          logicalOperator: f.logicalOperatorSelector || null
+        };
+      });
+    }
+
+    // ─── DATE RANGE ─────────────────────────────────────────
+    if (s.type === 'DATE_RANGE_NAV') {
+      base.dateRangeNavDto = {
+        inputSelector: s.inputSelector || null,
+        calendarContainerSelector: s.calendarContainerSelector || null,
+        applyButtonSelector: s.applyButtonSelector || null,
+        selectionType: s.selectionType || null,
+        preset: s.preset || null,
+        startDate: s.startDate || null,
+        endDate: s.endDate || null,
+        dateFormat: s.dateFormat || null
+      };
+    }
+
+    // ─── MANAGE COLUMN ──────────────────────────────────────
+    if (s.type === 'MANAGE_COL_NAV') {
+      base.saveBtnCss = s.saveBtnCss || null;
+
+      base.columns = (s.columns || []).map(c => ({
+        columnName: c.columnName || null,
+        action: c.action || null,
+        position: c.position ?? null
+      }));
+    }
+
+    // ─── VERIFICATIONS (always allowed) ─────────────────────
+    base.initialVerify = (s.initialVerifications || []).map(v => ({
+      cssSelector: v.locator || null,
+      expectedResult: v.value || null
+    }));
+
+    base.finalVerify = (s.finalVerifications || []).map(v => ({
+      cssSelector: v.locator || null,
+      expectedResult: v.value || null
+    }));
+
+    // 🚀 Remove undefined keys (important cleanup)
+    return Object.fromEntries(
+      Object.entries(base).filter(([_, v]) => v !== undefined)
+    );
   });
 
   return {
     runName: state.runName,
     runType: state.runType,
-    createdBy: result.createdBy || 'user',
+    createdBy: result.createdBy,
     projectId: result.projectId,
     moduleId: result.moduleId,
-    tags: state.tags.split(',').map(t => t.trim()).filter(Boolean),
+    tags: (state.tags || '')
+      .split(',')
+      .map(t => t.trim())
+      .filter(Boolean),
     resultStatement: state.resultStatement,
-    scenariosList: [prependedScenario, ...userScenarios]
+    scenariosList
   };
 }
 

@@ -5,6 +5,7 @@
 let recorderWindowId = null;   // ID of the detached recorder window
 let targetTabId = null;         // The tab the user is recording against
 let popupTabId = null;          // The tab inside the recorder window
+let isCreatingWindow = false;   // Guard against onActivated race during window creation
 
 // ── Open / focus the recorder window when the toolbar icon is clicked ────────
 chrome.action.onClicked.addListener(async (tab) => {
@@ -22,6 +23,10 @@ chrome.action.onClicked.addListener(async (tab) => {
     }
   }
 
+  // Save the real target tab before async window creation
+  const savedTargetTabId = tab.id;
+  isCreatingWindow = true;
+
   // Create a new detached window — NOT a popup, so it stays open
   const win = await chrome.windows.create({
     url: chrome.runtime.getURL(
@@ -36,6 +41,10 @@ chrome.action.onClicked.addListener(async (tab) => {
   recorderWindowId = win.id;
   // The single tab in our new window
   popupTabId = win.tabs?.[0]?.id ?? null;
+
+  // Restore targetTabId — onActivated may have overwritten it during await
+  targetTabId = savedTargetTabId;
+  isCreatingWindow = false;
 });
 
 // ── Track when our recorder window is closed ─────────────────────────────────
@@ -50,6 +59,8 @@ chrome.windows.onRemoved.addListener((windowId) => {
 chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
   // Ignore activation events from our own recorder window
   if (windowId === recorderWindowId) return;
+  // Ignore activations triggered by window creation (recorderWindowId not yet set)
+  if (isCreatingWindow) return;
   targetTabId = tabId;
   notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId });
 });
