@@ -105,17 +105,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // Popup wants to start element capture on the target page
     case 'START_CAPTURE': {
-      ensureContentScript(targetTabId).then(() => {
-        chrome.tabs.sendMessage(targetTabId, {
+      if (!targetTabId) {
+        sendResponse({ ok: false, error: 'No target tab' });
+        break;
+      }
+      ensureContentScript(targetTabId)
+        .then(() => chrome.tabs.sendMessage(targetTabId, {
           type: 'START_CAPTURE',
           captureMode: msg.captureMode   // 'LOCATOR' | 'VALUE' | 'BOTH'
-        }).catch(console.warn);
-        // Bring the target tab's window to front so user can click elements
-        chrome.tabs.get(targetTabId, (tab) => {
-          if (tab?.windowId) chrome.windows.update(tab.windowId, { focused: true });
+        }))
+        .then(() => {
+          // Bring the target tab's window to front so user can click elements
+          chrome.tabs.get(targetTabId, (tab) => {
+            if (tab?.windowId) chrome.windows.update(tab.windowId, { focused: true });
+          });
+          sendResponse({ ok: true });
+        })
+        .catch((err) => {
+          console.warn('[QA] START_CAPTURE failed:', err);
+          sendResponse({ ok: false, error: err?.message ?? String(err) });
         });
-        sendResponse({ ok: true });
-      });
       return true;
     }
 

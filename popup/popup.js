@@ -119,6 +119,8 @@ function normalizeState() {
     if (!sc.dateRange) sc.dateRange = { preset: 'THIS_WEEK', custom: null };
     else if (sc.dateRange.preset) sc.dateRange.preset = String(sc.dateRange.preset).toUpperCase();
     if (!Array.isArray(sc.csvUploads)) sc.csvUploads = [];
+    if (!Array.isArray(sc.initialVerifications)) sc.initialVerifications = [];
+    if (!Array.isArray(sc.finalVerifications)) sc.finalVerifications = [];
   });
   if (state.activeScenarioIdx >= state.scenarios.length) {
     state.activeScenarioIdx = Math.max(0, state.scenarios.length - 1);
@@ -252,7 +254,9 @@ function addScenario() {
     filters: [],
     columns: [],
     dateRange: { preset: 'THIS_WEEK', custom: null },
-    csvUploads: []
+    csvUploads: [],
+    initialVerifications: [],
+    finalVerifications: []
   };
   state.scenarios.push(sc);
   state.activeScenarioIdx = state.scenarios.length - 1;
@@ -367,6 +371,8 @@ function renderActiveScenario() {
   }
 
   sc.csvUploads ??= [];
+  sc.initialVerifications ??= [];
+  sc.finalVerifications ??= [];
 
   const form = document.createElement('div');
   form.className = 'scenario-form';
@@ -398,16 +404,51 @@ function renderActiveScenario() {
   typeRow.appendChild(typeSelect);
   form.appendChild(typeRow);
 
-  if (CSV_SCENARIO_TYPES.has(String(sc.type).toUpperCase())) {
-    form.appendChild(renderCsvUploadBuilder(sc));
-  }
+  const scType = String(sc.type).toUpperCase();
 
-  const typeDef = TYPES[sc.type];
-  if (typeDef) {
-    typeDef.fields.forEach((key) => {
-      const fieldEl = renderScenarioField(sc, key);
-      if (fieldEl) form.appendChild(fieldEl);
-    });
+  if (scType === 'URL') {
+    // 1. URL field
+    const urlField = renderScenarioField(sc, 'url');
+    if (urlField) form.appendChild(urlField);
+    // 2. Initial Verification (after URL)
+    form.appendChild(renderVerificationBuilder(sc, 'initial', 'Initial Verification'));
+    // 3. CSV section
+    form.appendChild(renderCsvUploadBuilder(sc));
+    // 4. Final Verification (after CSV)
+    form.appendChild(renderVerificationBuilder(sc, 'final', 'Final Verification'));
+
+  } else if (scType === 'FORM_MODAL') {
+    // 1. Regular fields (cssSelector, value, clickCss)
+    const typeDef = TYPES[sc.type];
+    if (typeDef) {
+      typeDef.fields.forEach((key) => {
+        const fieldEl = renderScenarioField(sc, key);
+        if (fieldEl) form.appendChild(fieldEl);
+      });
+    }
+    // 2. Initial Verification (before CSV)
+    form.appendChild(renderVerificationBuilder(sc, 'initial', 'Initial Verification'));
+    // 3. CSV section
+    form.appendChild(renderCsvUploadBuilder(sc));
+    // 4. Final Verification (after CSV)
+    form.appendChild(renderVerificationBuilder(sc, 'final', 'Final Verification'));
+
+  } else {
+    // All other types
+    if (CSV_SCENARIO_TYPES.has(scType)) {
+      form.appendChild(renderCsvUploadBuilder(sc));
+    }
+    const typeDef = TYPES[sc.type];
+    if (typeDef) {
+      typeDef.fields.forEach((key) => {
+        const fieldEl = renderScenarioField(sc, key);
+        if (fieldEl) form.appendChild(fieldEl);
+      });
+    }
+    // Final Verification at the end (skip for ASSERT)
+    if (scType !== 'ASSERT') {
+      form.appendChild(renderVerificationBuilder(sc, 'final', 'Final Verification'));
+    }
   }
 
   body.innerHTML = '';
@@ -847,6 +888,113 @@ function renderColumnsBuilder(sc) {
   return wrap;
 }
 
+// ── Verification builder (Initial / Final) ────────────────────────────────────
+function renderVerificationBuilder(sc, verType, title) {
+  const key = verType === 'initial' ? 'initialVerifications' : 'finalVerifications';
+  if (!Array.isArray(sc[key])) sc[key] = [];
+
+  const wrap = document.createElement('div');
+  wrap.className = `sub-builder verification-builder verification-${verType}`;
+  wrap.innerHTML = `
+    <div class="sub-builder-header">
+      <span class="sub-builder-title verification-title verification-${verType}-title">${title}</span>
+      <button class="sub-builder-add">+ Add Block</button>
+    </div>
+    <div class="verification-list"></div>
+  `;
+
+  const list = wrap.querySelector('.verification-list');
+
+  const renderRows = () => {
+    list.innerHTML = '';
+
+    if (!sc[key].length) {
+      list.innerHTML = `<div class="verification-empty">No blocks yet — click <strong>+ Add Block</strong>.</div>`;
+      return;
+    }
+
+    sc[key].forEach((v, i) => {
+      const row = document.createElement('div');
+      row.className = 'sub-row verification-row';
+      row.innerHTML = `
+        <span class="verification-block-num">${i + 1}</span>
+        <input type="text" class="sf-input" placeholder="Locator (CSS / XPath)" style="flex:1.5" value="${escAttr(v.locator || '')}" autocomplete="off" spellcheck="false">
+        <input type="text" class="sf-input" placeholder="Expected Value" style="flex:1" value="${escAttr(v.value || '')}" autocomplete="off" spellcheck="false">
+        <button class="sub-remove" title="Remove block">✕</button>
+      `;
+
+      const [locEl, valEl] = row.querySelectorAll('input');
+
+      locEl.addEventListener('focus', () => {
+        activeField = { scenarioIdx: state.activeScenarioIdx, fieldKey: `__verif_${verType}_${i}_locator` };
+        renderCapturePanel();
+      });
+      locEl.addEventListener('input', () => {
+        v.locator = locEl.value;
+        persistState();
+        refreshJsonIfOpen();
+      });
+
+      valEl.addEventListener('focus', () => {
+        activeField = { scenarioIdx: state.activeScenarioIdx, fieldKey: `__verif_${verType}_${i}_value` };
+        renderCapturePanel();
+      });
+      valEl.addEventListener('input', () => {
+        v.value = valEl.value;
+        persistState();
+        refreshJsonIfOpen();
+      });
+
+      // Single ⚡ Both capture button — fills locator + value in one click
+      const captureBothBtn = document.createElement('button');
+      captureBothBtn.className = 'cp-btn both';
+      captureBothBtn.title = 'Capture locator + expected value from page';
+      captureBothBtn.textContent = '⚡ Both';
+      captureBothBtn.addEventListener('click', () => {
+        activeField = { scenarioIdx: state.activeScenarioIdx, fieldKey: `__verif_${verType}_${i}` };
+        window.__verifCapture = { sc, key, idx: i };
+        startCaptureVerif('BOTH');
+      });
+
+      row.appendChild(captureBothBtn);
+
+      row.querySelector('.sub-remove').addEventListener('click', () => {
+        sc[key].splice(i, 1);
+        renderRows();
+        persistState();
+        refreshJsonIfOpen();
+      });
+
+      list.appendChild(row);
+    });
+  };
+
+  renderRows();
+
+  wrap.querySelector('.sub-builder-add').addEventListener('click', () => {
+    sc[key].push({ locator: '', value: '' });
+    renderRows();
+    persistState();
+  });
+
+  return wrap;
+}
+
+// ── Verification capture helpers ───────────────────────────────────────────────
+function startCaptureVerif(mode) {
+  if (!targetTabId) {
+    showToast('No target tab — click toolbar icon from a page first', 'error');
+    return;
+  }
+  isCapturing = true;
+  chrome.runtime.sendMessage({ type: 'START_CAPTURE', captureMode: mode }, (res) => {
+    if (!res?.ok) {
+      isCapturing = false;
+      showToast('Could not inject capture script', 'error');
+    }
+  });
+}
+
 // ── Capture panel ─────────────────────────────────────────────────────────────
 function renderCapturePanel() {
   const panel = document.getElementById('capture-panel');
@@ -964,6 +1112,32 @@ function handleCaptureResult(captureMode, result) {
   }
 
   const fieldKey = activeField.fieldKey;
+
+  // ── Verification block capture ──────────────────────────────────────────────
+  // fieldKey pattern: __verif_{initial|final}_{index}
+  if (fieldKey.startsWith('__verif_')) {
+    const vc = window.__verifCapture;
+    if (vc) {
+      if (captureMode === 'BOTH') {
+        vc.sc[vc.key][vc.idx].locator = result.locator ?? '';
+        vc.sc[vc.key][vc.idx].value   = result.value   ?? '';
+        showToast(`✓ Locator + Value captured (${result.confidence ?? '?'}%)`, 'success');
+      } else if (captureMode === 'LOCATOR') {
+        vc.sc[vc.key][vc.idx].locator = result.locator ?? '';
+        showToast(`✓ Locator captured (${result.confidence ?? '?'}%)`, 'success');
+      } else if (captureMode === 'VALUE') {
+        vc.sc[vc.key][vc.idx].value = result.value ?? '';
+        showToast('✓ Value captured', 'success');
+      }
+      window.__verifCapture = null;
+    }
+    activeField = null;
+    persistState();
+    render();
+    return;
+  }
+
+  // ── Regular field capture ───────────────────────────────────────────────────
   const typeDef = TYPES[sc.type];
 
   if (captureMode === 'BOTH') {
@@ -1072,6 +1246,16 @@ async function buildPayload() {
         name: col.name,
         action: col.action,
         position: col.position
+      })) : [],
+
+      initialVerify: Array.isArray(sc.initialVerifications) ? sc.initialVerifications.map(v => ({
+        cssSelector: v.locator,
+        expectedResult: v.value
+      })) : [],
+
+      finalVerify: Array.isArray(sc.finalVerifications) ? sc.finalVerifications.map(v => ({
+        cssSelector: v.locator,
+        expectedResult: v.value
       })) : []
     };
   });

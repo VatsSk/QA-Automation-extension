@@ -982,3 +982,69 @@ body.compact .payload-pane {
     width: 100vw;
   }
 }
+
+/* ── Verification Blocks (Initial / Final) ───────────────────────────────── */
+
+.verification-builder {
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* Initial Verification: blue accent */
+.verification-initial {
+  border-left: 3px solid var(--blue);
+}
+.verification-initial .sub-builder-header {
+  background: rgba(79, 156, 249, 0.08);
+  border-bottom: 1px solid rgba(79, 156, 249, 0.2);
+}
+.verification-initial-title {
+  color: var(--blue) !important;
+}
+
+/* Final Verification: green accent */
+.verification-final {
+  border-left: 3px solid var(--green);
+}
+.verification-final .sub-builder-header {
+  background: rgba(52, 211, 153, 0.08);
+  border-bottom: 1px solid rgba(52, 211, 153, 0.2);
+}
+.verification-final-title {
+  color: var(--green) !important;
+}
+
+/* Block number badge */
+.verification-block-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-sec);
+  flex-shrink: 0;
+}
+
+/* Empty state placeholder */
+.verification-empty {
+  font-size: 11px;
+  color: var(--text-sec);
+  padding: 8px 12px;
+  font-style: italic;
+}
+.verification-empty strong {
+  color: var(--text-pri);
+  font-style: normal;
+}
+
+/* Inline capture buttons inside verification rows */
+.verification-row .cp-btn {
+  padding: 3px 7px;
+  font-size: 11px;
+  min-width: 28px;
+}
