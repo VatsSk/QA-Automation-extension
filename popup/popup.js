@@ -24,18 +24,15 @@ const CSV_SCENARIO_TYPES = new Set(['URL', 'MODAL', 'FORM_MODAL']);
 
 // URL params
 const params = new URLSearchParams(location.search);
-let projectId   = params.get('projectId') || null;
-let moduleId    = params.get('moduleId')   || null;
-let authToken   = params.get('authToken')  || null;
+let projectId = params.get('projectId') || null;
+let moduleId = params.get('moduleId') || null;
+let authToken = params.get('authToken') || null;
 let targetTabId = parseInt(params.get('tabId')) || null;
-
-// Backend-set values (propagated into URL scenarios automatically)
-let storageUrl     = '';
-let storageCsvPath = '';
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   await restoreState();
+  await ensureSystemScenario();
   bindMeta();
   bindToolbar();
   bindCapturePanel();
@@ -88,8 +85,8 @@ async function restoreState() {
       showToast('Draft restored', 'success');
     }
 
-    // Restore projectId/moduleId/authToken from storage if not in URL
-    const extra = await Storage.get(['projectId', 'moduleId', 'authToken', 'url', 'csvPath']);
+    // Restore projectId/moduleId from storage if not in URL
+    const extra = await Storage.get(['projectId', 'moduleId', 'authToken']);
 
     if (!projectId && extra.projectId) {
       projectId = extra.projectId;
@@ -108,10 +105,6 @@ async function restoreState() {
     } else if (authToken) {
       await Storage.set({ authToken });
     }
-
-    // Cache backend-provided URL and CSV path for URL-type scenarios
-    if (extra.url)     storageUrl     = extra.url;
-    if (extra.csvPath) storageCsvPath = extra.csvPath;
   } catch (e) {
     console.warn('[QA] Could not restore state:', e);
   }
@@ -132,6 +125,53 @@ function normalizeState() {
   });
   if (state.activeScenarioIdx >= state.scenarios.length) {
     state.activeScenarioIdx = Math.max(0, state.scenarios.length - 1);
+  }
+}
+
+// ── System URL scenario injection ─────────────────────────────────────────────
+// Reads backend-provided login URL + CSV path from chrome.storage.local and
+// ensures a system URL scenario exists at index 0 in state.scenarios.
+async function ensureSystemScenario() {
+  try {
+    const backendData = await Storage.get(['url', 'csvPath']);
+    const loginUrl = backendData.url || '';
+    const csvPath = backendData.csvPath || '';
+
+    // Check if a system scenario already exists at index 0
+    const existing = state.scenarios[0];
+    if (existing && existing.isSystemScenario) {
+      // Update with latest backend data only if user hasn't edited the field
+      if (loginUrl && !existing.fields.url) {
+        existing.fields.url = loginUrl;
+      }
+      if (csvPath && !existing.csv) {
+        existing.csv = csvPath;
+      }
+      return;
+    }
+
+    // Create the system URL scenario and prepend it
+    const systemScenario = {
+      id: 'SYSTEM_URL',
+      isSystemScenario: true,
+      type: 'URL',
+      fields: {
+        url: loginUrl
+      },
+      csv: csvPath,
+      assertions: [],
+      filters: [],
+      columns: [],
+      dateRange: { preset: 'THIS_WEEK', custom: null },
+      csvUploads: [],
+      initialVerifications: [],
+      finalVerifications: []
+    };
+
+    state.scenarios.unshift(systemScenario);
+    state.activeScenarioIdx = 0;
+  } catch (e) {
+    console.warn('[QA] Could not inject system scenario:', e);
   }
 }
 
@@ -253,10 +293,9 @@ function refreshJsonIfOpen() {
 
 // ── Scenario management ───────────────────────────────────────────────────────
 function addScenario() {
-  const isFirst = state.scenarios.length === 0;
   const sc = {
     id: Date.now(),
-    type: isFirst ? 'URL' : 'URL_NAV',
+    type: 'URL',
     fields: {},
     assertions: [],
     filters: [],
@@ -273,6 +312,12 @@ function addScenario() {
 }
 
 function removeScenario(idx) {
+  // Protect the system scenario from deletion
+  const sc = state.scenarios[idx];
+  if (sc && sc.isSystemScenario) {
+    showToast('System scenario cannot be deleted', 'error');
+    return;
+  }
   state.scenarios.splice(idx, 1);
   if (state.activeScenarioIdx >= state.scenarios.length) {
     state.activeScenarioIdx = Math.max(0, state.scenarios.length - 1);
@@ -315,16 +360,25 @@ function renderScenarioTabs() {
   container.innerHTML = '';
 
   state.scenarios.forEach((sc, idx) => {
+    const isSystem = sc.isSystemScenario === true;
     const tab = document.createElement('div');
-    tab.className = `scenario-tab${idx === state.activeScenarioIdx ? ' active' : ''}`;
-    tab.draggable = true;
+    tab.className = `scenario-tab${idx === state.activeScenarioIdx ? ' active' : ''}${isSystem ? ' system-scenario' : ''}`;
+    tab.draggable = !isSystem; // System scenario cannot be dragged
     tab.dataset.idx = idx;
 
     const typeDef = TYPES[sc.type];
+    const closeBtn = isSystem
+      ? '' // No close button for system scenario
+      : `<button class="tab-close" data-idx="${idx}" title="Remove">✕</button>`;
+    const systemBadge = isSystem
+      ? '<span class="tab-system-badge">SYS</span>'
+      : '';
+
     tab.innerHTML = `
       <span class="tab-num">${idx + 1}</span>
+      ${systemBadge}
       <span>${typeDef?.label ?? sc.type}</span>
-      <button class="tab-close" data-idx="${idx}" title="Remove">✕</button>
+      ${closeBtn}
     `;
 
     tab.addEventListener('click', (e) => {
@@ -332,18 +386,25 @@ function renderScenarioTabs() {
       setActiveScenario(idx);
     });
 
-    tab.querySelector('.tab-close').addEventListener('click', (e) => {
-      e.stopPropagation();
-      removeScenario(idx);
-    });
+    // Only bind close button for non-system scenarios
+    const closeEl = tab.querySelector('.tab-close');
+    if (closeEl) {
+      closeEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeScenario(idx);
+      });
+    }
 
-    tab.addEventListener('dragstart', (e) => {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', idx);
-      tab.classList.add('dragging');
-    });
+    // Drag-and-drop (disabled for system scenario)
+    if (!isSystem) {
+      tab.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', idx);
+        tab.classList.add('dragging');
+      });
 
-    tab.addEventListener('dragend', () => tab.classList.remove('dragging'));
+      tab.addEventListener('dragend', () => tab.classList.remove('dragging'));
+    }
 
     tab.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -358,6 +419,10 @@ function renderScenarioTabs() {
       const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
       const toIdx = idx;
       if (fromIdx === toIdx) return;
+      // Prevent dropping before the system scenario
+      if (toIdx === 0 && state.scenarios[0]?.isSystemScenario) return;
+      // Prevent moving the system scenario
+      if (state.scenarios[fromIdx]?.isSystemScenario) return;
       const moved = state.scenarios.splice(fromIdx, 1)[0];
       state.scenarios.splice(toIdx, 0, moved);
       state.activeScenarioIdx = toIdx;
@@ -385,6 +450,8 @@ function renderActiveScenario() {
   const form = document.createElement('div');
   form.className = 'scenario-form';
 
+  const isSystem = sc.isSystemScenario === true;
+
   const typeRow = document.createElement('div');
   typeRow.className = 'scenario-type-row';
   typeRow.innerHTML = `<label>Type</label>`;
@@ -393,15 +460,26 @@ function renderActiveScenario() {
   typeSelect.className = 'field-select';
   typeSelect.style.flex = '1';
 
-  Object.entries(TYPES).forEach(([key, def]) => {
+  // System scenario is locked to URL type
+  if (isSystem) {
+    typeSelect.disabled = true;
     const opt = document.createElement('option');
-    opt.value = key;
-    opt.textContent = def.label;
-    opt.selected = sc.type === key;
+    opt.value = 'URL';
+    opt.textContent = 'URL (System)';
+    opt.selected = true;
     typeSelect.appendChild(opt);
-  });
+  } else {
+    Object.entries(TYPES).forEach(([key, def]) => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = def.label;
+      opt.selected = sc.type === key;
+      typeSelect.appendChild(opt);
+    });
+  }
 
   typeSelect.addEventListener('change', () => {
+    if (isSystem) return; // Guard: system scenario type cannot change
     sc.type = typeSelect.value;
     sc.fields = {};
     activeField = null;
@@ -415,17 +493,14 @@ function renderActiveScenario() {
   const scType = String(sc.type).toUpperCase();
 
   if (scType === 'URL') {
-    // URL with data — URL + CSV both from storage
-    sc.fields.url = storageUrl;
-    sc.csv        = storageCsvPath;
-
-    // 1. Read-only info panel (URL + CSV)
-    form.appendChild(renderStorageInfoPanel(true));
-    // 2. Initial Verification
+    // 1. URL field
+    const urlField = renderScenarioField(sc, 'url');
+    if (urlField) form.appendChild(urlField);
+    // 2. Initial Verification (after URL)
     form.appendChild(renderVerificationBuilder(sc, 'initial', 'Initial Verification'));
-    // 3. CSV upload section
+    // 3. CSV section
     form.appendChild(renderCsvUploadBuilder(sc));
-    // 4. Final Verification
+    // 4. Final Verification (after CSV)
     form.appendChild(renderVerificationBuilder(sc, 'final', 'Final Verification'));
 
   } else if (scType === 'FORM_MODAL') {
@@ -464,31 +539,6 @@ function renderActiveScenario() {
 
   body.innerHTML = '';
   body.appendChild(form);
-}
-
-// ── Storage info panel (read-only, used by URL / URL_NAV scenarios) ──────────
-function renderStorageInfoPanel(showCsv = false) {
-  const panel = document.createElement('div');
-  panel.className = 'storage-info-panel';
-  panel.innerHTML = `
-    <div class="sip-row">
-      <span class="sip-icon">🔗</span>
-      <div class="sip-content">
-        <span class="sip-label">URL</span>
-        <span class="sip-value" title="${escAttr(storageUrl)}">${escHtml(storageUrl || '(not set by backend)')}</span>
-      </div>
-    </div>
-    ${showCsv && storageCsvPath ? `
-    <div class="sip-row">
-      <span class="sip-icon">📄</span>
-      <div class="sip-content">
-        <span class="sip-label">CSV</span>
-        <span class="sip-value" title="${escAttr(storageCsvPath)}">${escHtml(storageCsvPath)}</span>
-      </div>
-    </div>` : ''}
-    <p class="sip-note">⚙ Set by backend · cannot be edited here</p>
-  `;
-  return panel;
 }
 
 function renderScenarioField(sc, key) {
@@ -1221,122 +1271,74 @@ async function refreshJsonPreview() {
     pre.textContent = 'Error building preview: ' + e.message;
   }
 }
+
 // ── Build payload ─────────────────────────────────────────────────────────────
+// Builds the payload directly from state.scenarios — the system URL scenario
+// is already at index 0, so no separate login scenario needs to be injected.
 async function buildPayload() {
   const result = await chrome.storage.local.get(null);
   console.log('[QA Debug] All Storage Keys:', result);
 
-  const scenariosList = (state.scenarios || []).map((s, i) => {
-    const typeConfig = TYPES[s.type] || {};
-    const allowedFields = typeConfig.fields || [];
+  const scenariosList = state.scenarios.map((sc, i) => {
+    const f = sc.fields || {};
 
-    const base = {
-      id: s.id || undefined,
-      type: s.type,
+    return {
       sequenceNo: i + 1,
+      type: sc.type,
+      url: f.url || '',
+      cssOpener: f.cssSelector || '',
+      value: f.value || '',
+      clickCss: f.clickCss || '',
+      applyFilterBtn: f.applyFilterBtn || '',
+      saveBtnCss: f.saveBtnCss || '',
+      csv: sc.csv || '',
+      statement: f.statement || '',
 
-      // always allowed (common fields)
-      url: allowedFields.includes('url') ? ((s.fields && s.fields.url) || null) : undefined,
-      cssOpener: allowedFields.includes('cssSelector') ? ((s.fields && s.fields.cssSelector) || null) : undefined,
-      value: allowedFields.includes('value') ? ((s.fields && s.fields.value) || null) : undefined,
-      clickCss: allowedFields.includes('clickCss') ? ((s.fields && s.fields.clickCss) || null) : undefined,
+      assertions: Array.isArray(sc.assertions) ? sc.assertions.map(a => ({
+        type: a.type,
+        locator: a.locator,
+        expectedValue: a.expectedValue
+      })) : [],
 
-      csv: typeConfig.hasData ? (s.csv || result.csvPath || null) : undefined,
-      scenarioBasePath: s.scenarioBasePath || null
+      filters: Array.isArray(sc.filters) ? sc.filters.map(fl => ({
+        locator: fl.locator,
+        filterType: fl.filterType,
+        value: fl.value
+      })) : [],
+
+      dateRangeNavDto: sc.dateRange ? {
+        preset: String(sc.dateRange.preset || null),
+        startDate: sc.dateRange.custom?.start || null,
+        endDate: sc.dateRange.custom?.end || null
+      } : null,
+
+      columns: Array.isArray(sc.columns) ? sc.columns.map(col => ({
+        name: col.name,
+        action: col.action,
+        position: col.position
+      })) : [],
+
+      initialVerify: Array.isArray(sc.initialVerifications) ? sc.initialVerifications.map(v => ({
+        cssSelector: v.locator,
+        expectedResult: v.value
+      })) : [],
+
+      finalVerify: Array.isArray(sc.finalVerifications) ? sc.finalVerifications.map(v => ({
+        cssSelector: v.locator,
+        expectedResult: v.value
+      })) : []
     };
-
-    // ─── ASSERT ─────────────────────────────────────────────
-    if (s.type === 'ASSERT') {
-      base.assertions = (s.assertions || []).map(a => ({
-        type: a.type || null,
-        locator: a.locator || null,
-        expected: a.expected || null,
-        tableId: a.tableId || null,
-        columnName: a.columnName || null,
-        order: a.order || null,
-        rowsBtn: a.rowsBtn || null,
-        prompt: a.promptAi || null
-      }));
-    }
-
-    // ─── FILTER NAV ─────────────────────────────────────────
-    if (s.type === 'FILTER_NAV') {
-      base.applyFilterBtn = s.applyBtnCss || null;
-
-      base.filters = (s.filters || []).map(f => {
-        let finalValue = f.value;
-
-        if (f.operation === 'RANGE') {
-          const start = f.value?.start;
-          const end = f.value?.end;
-          if (start && end) {
-            finalValue = formatRange(start, end, f.filterType);
-          }
-        }
-
-        return {
-          querySelector: f.querySelectorOfColName || null,
-          filterType: f.filterType || null,
-          operation: f.operation || null,
-          value: finalValue ?? null,
-          valueSelector: f.searchCssSelector || null,
-          logicalOperator: f.logicalOperatorSelector || null
-        };
-      });
-    }
-
-    // ─── DATE RANGE ─────────────────────────────────────────
-    if (s.type === 'DATE_RANGE_NAV') {
-      base.dateRangeNavDto = {
-        inputSelector: s.inputSelector || null,
-        calendarContainerSelector: s.calendarContainerSelector || null,
-        applyButtonSelector: s.applyButtonSelector || null,
-        selectionType: s.selectionType || null,
-        preset: s.preset || null,
-        startDate: s.startDate || null,
-        endDate: s.endDate || null,
-        dateFormat: s.dateFormat || null
-      };
-    }
-
-    // ─── MANAGE COLUMN ──────────────────────────────────────
-    if (s.type === 'MANAGE_COL_NAV') {
-      base.saveBtnCss = s.saveBtnCss || null;
-
-      base.columns = (s.columns || []).map(c => ({
-        columnName: c.columnName || null,
-        action: c.action || null,
-        position: c.position ?? null
-      }));
-    }
-
-    // ─── VERIFICATIONS (always allowed) ─────────────────────
-    base.initialVerify = (s.initialVerifications || []).map(v => ({
-      cssSelector: v.locator || null,
-      expectedResult: v.value || null
-    }));
-
-    base.finalVerify = (s.finalVerifications || []).map(v => ({
-      cssSelector: v.locator || null,
-      expectedResult: v.value || null
-    }));
-
-    // 🚀 Remove undefined keys (important cleanup)
-    return Object.fromEntries(
-      Object.entries(base).filter(([_, v]) => v !== undefined)
-    );
   });
+
+  console.log('[QA Debug] Scenarios List:', scenariosList);
 
   return {
     runName: state.runName,
     runType: state.runType,
-    createdBy: result.createdBy,
+    createdBy: result.createdBy || 'user',
     projectId: result.projectId,
     moduleId: result.moduleId,
-    tags: (state.tags || '')
-      .split(',')
-      .map(t => t.trim())
-      .filter(Boolean),
+    tags: state.tags.split(',').map(t => t.trim()).filter(Boolean),
     resultStatement: state.resultStatement,
     scenariosList
   };
@@ -1351,10 +1353,11 @@ function validate() {
   if (!state.runName.trim()) errors.push('Run Name is required');
 
   state.scenarios.forEach((sc, i) => {
+    const label = sc.isSystemScenario ? `Scenario ${i + 1} [System]` : `Scenario ${i + 1}`;
     const required = REQUIRED[sc.type] || [];
     required.forEach(key => {
       if (!sc.fields[key]?.trim()) {
-        errors.push(`Scenario ${i + 1} (${sc.type}): "${FIELD_META[key]?.label || key}" is required`);
+        errors.push(`${label} (${sc.type}): "${FIELD_META[key]?.label || key}" is required`);
       }
     });
   });
@@ -1390,7 +1393,7 @@ async function saveRun() {
 }
 
 // ── Clear run ─────────────────────────────────────────────────────────────────
-function clearRun() {
+async function clearRun() {
   if (!confirm('Clear current run? This cannot be undone.')) return;
   state = {
     runName: '',
@@ -1402,7 +1405,9 @@ function clearRun() {
   };
   activeField = null;
   lastCaptureResult = null;
-  Storage.clear();
+  // Re-inject the system scenario after clearing
+  await ensureSystemScenario();
+  await Storage.save(state);
   render();
 }
 

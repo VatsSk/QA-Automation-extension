@@ -342,6 +342,42 @@ body.compact .payload-pane {
   border-color: var(--purple);
 }
 
+/* System scenario tab styling */
+.scenario-tab.system-scenario {
+  border-left: 3px solid var(--green);
+  cursor: default;
+}
+
+.scenario-tab.system-scenario.active {
+  background: rgba(52, 211, 153, 0.10);
+  border-color: var(--green);
+  border-left: 3px solid var(--green);
+  color: var(--green);
+}
+
+.tab-system-badge {
+  display: inline-block;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(52, 211, 153, 0.15);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  color: var(--green);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+/* Disabled type selector for system scenario */
+.field-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--bg-raised);
+  border-style: dashed;
+}
+
 .add-scenario-btn {
   flex-shrink: 0;
   padding: 5px 10px;
