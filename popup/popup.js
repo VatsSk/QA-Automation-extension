@@ -1384,7 +1384,24 @@ async function saveRun() {
     await Storage.clear();
     showToast('Run saved!', 'success');
     setSaveStatus('● Saved', 'saved');
-    // setTimeout(() => window.close(), 1200);
+    
+    // Reset extension state
+    state = {
+      runName: '',
+      runType: 'manual',
+      tags: '',
+      resultStatement: '',
+      scenarios: [],
+      activeScenarioIdx: 0
+    };
+    activeField = null;
+    lastCaptureResult = null;
+    await ensureSystemScenario();
+    await Storage.save(state);
+    render();
+
+    // Close after a brief delay
+    setTimeout(() => window.close(), 1200);
   } catch (e) {
     showToast(`Save failed: ${e.message}`, 'error');
     btn.disabled = false;
