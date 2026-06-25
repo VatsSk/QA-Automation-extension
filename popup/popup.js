@@ -585,6 +585,40 @@ function renderScenarioField(sc, key) {
     return wrap;
   }
 
+  if (meta.captureMode === 'URL') {
+    const wrap = document.createElement('div');
+    wrap.className = 'scenario-field';
+    wrap.innerHTML = `
+      <div class="sf-header">
+        <span class="sf-label">${meta.label}</span>
+        <span class="sf-mode-badge url">URL</span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div class="sf-input-wrap" style="flex:1">
+          <input type="text" class="sf-input" placeholder="${meta.placeholder || ''}"
+            value="${escAttr(sc.fields[key] || '')}" autocomplete="off" spellcheck="false">
+          <button class="sf-clear-btn" title="Clear field">✕</button>
+        </div>
+        <button class="cp-btn" style="font-size:12px;white-space:nowrap" title="Capture current tab URL">🔗 Locate URL</button>
+      </div>
+    `;
+    const input = wrap.querySelector('.sf-input');
+    input.addEventListener('input', () => { sc.fields[key] = input.value; persistState(); refreshJsonIfOpen(); });
+    wrap.querySelector('.sf-clear-btn').addEventListener('click', () => { sc.fields[key] = ''; input.value = ''; persistState(); refreshJsonIfOpen(); });
+    wrap.querySelector('.cp-btn').addEventListener('click', () => {
+      if (!targetTabId) { showToast('No target tab', 'error'); return; }
+      chrome.tabs.get(targetTabId, (tab) => {
+        if (chrome.runtime.lastError || !tab?.url) { showToast('Could not get tab URL', 'error'); return; }
+        sc.fields[key] = tab.url;
+        input.value = tab.url;
+        persistState();
+        refreshJsonIfOpen();
+        showToast('✓ URL captured', 'success');
+      });
+    });
+    return wrap;
+  }
+
   const modeClass = meta.captureMode.toLowerCase();
   const wrap = document.createElement('div');
   wrap.className = 'scenario-field';

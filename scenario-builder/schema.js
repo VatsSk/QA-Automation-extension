@@ -151,7 +151,7 @@ const TYPES = {
 // FIELD META
 // ─────────────────────────────────────────────────────────────────────────────
 const FIELD_META = {
-  url:                       { label: 'URL',                      captureMode: 'TEXT',   placeholder: 'https://...' },
+  url:                       { label: 'URL',                      captureMode: 'URL',    placeholder: 'https://...' },
   cssSelector:               { label: 'CSS Selector',             captureMode: 'LOCATOR', placeholder: '#element or .class' },
   value:                     { label: 'Value',                    captureMode: 'VALUE',  placeholder: 'Input value or text' },
   clickCss:                  { label: 'Click CSS',                captureMode: 'LOCATOR', placeholder: 'CSS selector to click after fill' },

@@ -464,6 +464,7 @@ body.compact .payload-pane {
 .sf-mode-badge.value   { background: rgba(52,211,153,0.15); color: var(--green); }
 .sf-mode-badge.both    { background: rgba(167,139,250,0.15); color: var(--purple); }
 .sf-mode-badge.text    { background: rgba(139,148,158,0.12); color: var(--text-sec); }
+.sf-mode-badge.url     { background: rgba(251,191,36,0.15);  color: var(--am); }
 
 .sf-input-wrap {
   position: relative;
