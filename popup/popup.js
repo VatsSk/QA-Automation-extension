@@ -628,18 +628,22 @@ function renderScenarioField(sc, key) {
       <span class="sf-label">${meta.label}</span>
       <span class="sf-mode-badge ${modeClass}">${meta.captureMode}</span>
     </div>
-    <div class="sf-input-wrap">
-      <input
-        type="text"
-        class="sf-input${isActive ? ' active-field mode-' + modeClass : ''}"
-        placeholder="${meta.placeholder || ''}"
-        value="${escAttr(sc.fields[key] || '')}"
-        data-field="${key}"
-        data-sc-idx="${idx}"
-        autocomplete="off"
-        spellcheck="false"
-      >
-      <button class="sf-clear-btn" title="Clear field">✕</button>
+    <div style="display:flex;gap:6px;align-items:center">
+      <div class="sf-input-wrap" style="flex:1">
+        <input
+          type="text"
+          class="sf-input${isActive ? ' active-field mode-' + modeClass : ''}"
+          placeholder="${meta.placeholder || ''}"
+          value="${escAttr(sc.fields[key] || '')}"
+          data-field="${key}"
+          data-sc-idx="${idx}"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <button class="sf-clear-btn" title="Clear field">✕</button>
+      </div>
+      ${meta.captureMode === 'LOCATOR' ? `<button class="cp-btn locator sf-inline-cap" style="font-size:12px;white-space:nowrap">🎯</button>` : ''}
+      ${meta.captureMode === 'VALUE'   ? `<button class="cp-btn value sf-inline-cap"   style="font-size:12px;white-space:nowrap">📋</button>` : ''}
     </div>
     ${isActive ? '<span class="sf-active-label">← active · click a capture button below</span>' : ''}
   `;
@@ -664,6 +668,14 @@ function renderScenarioField(sc, key) {
     persistState();
     refreshJsonIfOpen();
   });
+
+  const inlineCap = wrap.querySelector('.sf-inline-cap');
+  if (inlineCap) {
+    inlineCap.addEventListener('click', () => {
+      activeField = { scenarioIdx: idx, fieldKey: key };
+      startCapture(meta.captureMode);
+    });
+  }
 
   return wrap;
 }
