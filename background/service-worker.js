@@ -28,13 +28,14 @@ chrome.action.onClicked.addListener(async (tab) => {
   isCreatingWindow = true;
 
   // Create a new detached window — NOT a popup, so it stays open
+  const saved = await chrome.storage.local.get(['winW', 'winH']);
   const win = await chrome.windows.create({
     url: chrome.runtime.getURL(
       `popup/popup.html?tabId=${tab.id}&windowId=SELF`
     ),
     type: 'panel',   // panel stays on top and does not close on page click
-    width: 720,
-    height: 820,
+    width:  saved.winW || 720,
+    height: saved.winH || 820,
     focused: true
   });
 

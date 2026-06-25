@@ -177,6 +177,15 @@ async function ensureSystemScenario() {
 
 function setupAutoSave() {
   setInterval(persistState, 10_000);
+
+  // Persist window size across sessions
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      chrome.storage.local.set({ winW: window.outerWidth, winH: window.outerHeight });
+    }, 400);
+  });
 }
 
 async function persistState() {
@@ -454,8 +463,7 @@ function renderActiveScenario() {
 
   const typeRow = document.createElement('div');
   typeRow.className = 'scenario-type-row';
-  typeRow.innerHTML = `<label>Type</label>`;
-
+  typeRow.innerHTML = `<label>Type</label> <br/>`;
   const typeSelect = document.createElement('select');
   typeSelect.className = 'field-select';
   typeSelect.style.flex = '1';
