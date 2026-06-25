@@ -785,25 +785,93 @@ function renderAssertionBuilder(sc) {
     sc.assertions.forEach((a, i) => {
       const row = document.createElement('div');
       row.className = 'sub-row';
-      row.innerHTML = `
-        <select>${Object.entries(ASSERT_TYPES).map(([k, v]) =>
+      row.style.flexDirection = 'column';
+      row.style.gap = '8px';
+
+      const header = document.createElement('div');
+      header.style.display = 'flex';
+      header.style.gap = '8px';
+      header.innerHTML = `
+        <select style="flex:1"><option value="">Select type...</option>${Object.entries(ASSERT_TYPES).map(([k, v]) =>
           `<option value="${k}"${a.type === k ? ' selected' : ''}>${v.label}</option>`).join('')}
         </select>
-        <input type="text" placeholder="Locator" value="${escAttr(a.locator || '')}">
-        <input type="text" placeholder="Expected value" value="${escAttr(a.expectedValue || '')}">
         <button class="sub-remove" title="Remove">✕</button>
       `;
 
-      const [typeEl, locEl, valEl] = row.querySelectorAll('select, input, input');
-      typeEl.addEventListener('change', () => { a.type = typeEl.value; persistState(); refreshJsonIfOpen(); });
-      locEl.addEventListener('input', () => { a.locator = locEl.value; persistState(); refreshJsonIfOpen(); });
-      valEl.addEventListener('input', () => { a.expectedValue = valEl.value; persistState(); refreshJsonIfOpen(); });
+      const typeEl = header.querySelector('select');
+      typeEl.addEventListener('change', () => {
+        a.type = typeEl.value;
+        renderRows();
+        persistState();
+        refreshJsonIfOpen();
+      });
 
-      row.querySelector('.sub-remove').addEventListener('click', () => {
+      header.querySelector('.sub-remove').addEventListener('click', () => {
         sc.assertions.splice(i, 1);
         renderRows();
         persistState();
       });
+
+      row.appendChild(header);
+
+      const config = ASSERT_TYPES[a.type];
+      if (config) {
+        config.fields.forEach(field => {
+          const fieldMeta = FIELD_META[field];
+          const fieldWrap = document.createElement('div');
+          fieldWrap.style.display = 'flex';
+          fieldWrap.style.gap = '8px';
+          fieldWrap.style.alignItems = 'center';
+
+          if (field === 'order') {
+            fieldWrap.innerHTML = `
+              <label style="min-width:100px">${fieldMeta?.label || field}</label>
+              <select style="flex:1">${SORT_ORDER_OPTIONS.map(opt =>
+                `<option value="${opt.value}"${a[field] === opt.value ? ' selected' : ''}>${opt.label}</option>`
+              ).join('')}</select>
+            `;
+            fieldWrap.querySelector('select').addEventListener('change', e => {
+              a[field] = e.target.value;
+              persistState();
+              refreshJsonIfOpen();
+            });
+          } else if (field === 'promptAi') {
+            fieldWrap.innerHTML = `
+              <label style="min-width:100px">${fieldMeta?.label || field}</label>
+              <textarea style="flex:1" rows="2" placeholder="${fieldMeta?.placeholder || ''}">${escAttr(a[field] || '')}</textarea>
+            `;
+            fieldWrap.querySelector('textarea').addEventListener('input', e => {
+              a[field] = e.target.value;
+              persistState();
+              refreshJsonIfOpen();
+            });
+          } else {
+            const captureMode = fieldMeta?.captureMode; // 'LOCATOR' or 'VALUE'
+            const showCapture = captureMode === 'LOCATOR' || captureMode === 'VALUE';
+            fieldWrap.innerHTML = `
+              <label style="min-width:100px">${fieldMeta?.label || field}</label>
+              <input type="text" style="flex:1" placeholder="${fieldMeta?.placeholder || ''}" value="${escAttr(a[field] || '')}">
+              ${showCapture ? `<button class="cp-btn ${captureMode === 'LOCATOR' ? 'locator' : 'value'} sf-capture-btn" style="padding:3px 7px;font-size:12px" title="Capture ${captureMode === 'LOCATOR' ? 'locator' : 'value'}">${captureMode === 'LOCATOR' ? '🎯' : '📋'}</button>` : ''}
+            `;
+            fieldWrap.querySelector('input').addEventListener('input', e => {
+              a[field] = e.target.value;
+              persistState();
+              refreshJsonIfOpen();
+            });
+            if (showCapture) {
+              fieldWrap.querySelector('.sf-capture-btn').addEventListener('click', () => {
+                const assertKey = `__assert_${i}_${field}`;
+                window.__assertCapture = { assertion: a, field };
+                activeField = { scenarioIdx: state.activeScenarioIdx, fieldKey: assertKey };
+                renderCapturePanel();
+                startCapture(captureMode);
+              });
+            }
+          }
+
+          row.appendChild(fieldWrap);
+        });
+      }
 
       list.appendChild(row);
     });
@@ -812,7 +880,7 @@ function renderAssertionBuilder(sc) {
   renderRows();
 
   wrap.querySelector('.sub-builder-add').addEventListener('click', () => {
-    sc.assertions.push({ type: 'EQUALS', locator: '', expectedValue: '' });
+    sc.assertions.push({ type: 'ASSERT_VISIBLE' });
     renderRows();
     persistState();
   });
@@ -1223,7 +1291,24 @@ function handleCaptureResult(captureMode, result) {
     return;
   }
 
-  // ── Regular field capture ───────────────────────────────────────────────────
+  // ── Assertion field capture ─────────────────────────────────────────────────
+  if (fieldKey.startsWith('__assert_')) {
+    const ac = window.__assertCapture;
+    if (ac) {
+      if (captureMode === 'LOCATOR') {
+        ac.assertion[ac.field] = result.locator ?? '';
+        showToast(`✓ Locator captured (${result.confidence ?? '?'}%)`, 'success');
+      } else if (captureMode === 'VALUE') {
+        ac.assertion[ac.field] = result.value ?? '';
+        showToast('✓ Value captured', 'success');
+      }
+      window.__assertCapture = null;
+    }
+    activeField = null;
+    persistState();
+    render();
+    return;
+  }
   const typeDef = TYPES[sc.type];
 
   if (captureMode === 'BOTH') {
@@ -1296,8 +1381,13 @@ async function buildPayload() {
 
       assertions: Array.isArray(sc.assertions) ? sc.assertions.map(a => ({
         type: a.type,
-        locator: a.locator,
-        expectedValue: a.expectedValue
+        locator: a.locator || null,
+        payload: a.expected || null,
+        tableId: a.tableId || null,
+        colName: a.columnName || null,
+        rowsBtn: a.rowsBtn || null,
+        order: a.order || null,
+        prompt: a.promptAi || null
       })) : [],
 
       filters: Array.isArray(sc.filters) ? sc.filters.map(fl => ({

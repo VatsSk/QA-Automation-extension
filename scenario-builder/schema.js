@@ -88,7 +88,7 @@ const TYPES = {
     icon: '✓',
     color: 'var(--or)',
     bg: 'var(--or-d)',
-    fields: ['assertType', 'tableId', 'locator', 'expected', 'columnName', 'rangeId', 'rowsBtn'],
+    fields: ['assertions'],
     hasData: false,
     dynamicFields: true,
     hint: 'Assert UI or data conditions'
@@ -161,10 +161,10 @@ const FIELD_META = {
   inputSelector:             { label: 'Input Selector',           captureMode: 'LOCATOR', placeholder: 'CSS selector of date input' },
   calendarContainerSelector: { label: 'Calendar Container',       captureMode: 'LOCATOR', placeholder: 'CSS selector of calendar' },
   dateFormat:                { label: 'Date Format',              captureMode: 'TEXT',   placeholder: 'YYYY-MM-DD' },
-  tableId:                   { label: 'Table ID',                 captureMode: 'VALUE',  placeholder: 'Table element ID' },
-  locator:                   { label: 'Locator',                  captureMode: 'LOCATOR', placeholder: 'CSS or XPath selector' },
-  expected:                  { label: 'Expected Value',           captureMode: 'VALUE',  placeholder: 'Expected text or value' },
-  columnName:                { label: 'Column Name',              captureMode: 'VALUE',  placeholder: 'Column header name' },
+  tableId:                   { label: 'Table CSS',            captureMode: 'LOCATOR', placeholder: 'CSS selector of the table' },
+  locator:                   { label: 'CSS Selector',         captureMode: 'LOCATOR', placeholder: 'CSS or XPath selector' },
+  expected:                  { label: 'Expected Value',       captureMode: 'VALUE',  placeholder: 'For text: substring / For column: comma-separated values' },
+  columnName:                { label: 'Column Name(s)',       captureMode: 'VALUE',  placeholder: 'Column header name (comma-separated for multiple)' },
   rangeId:                   { label: 'Range ID',                 captureMode: 'VALUE',  placeholder: 'Date range element ID' },
   rowsBtn:                   { label: 'Rows Button CSS',          captureMode: 'LOCATOR', placeholder: 'CSS of rows-per-page button' },
   promptAi:                  { label: 'AI Prompt',                captureMode: 'TEXT',   placeholder: 'Describe what to assert...' },
@@ -180,66 +180,18 @@ const FIELD_META = {
 // ASSERT TYPES
 // ─────────────────────────────────────────────────────────────────────────────
 const ASSERT_TYPES = {
-  ASSERT_VISIBLE: {
-    label: 'Element Visible',
-    fields: ['locator'],
-    required: ['locator']
-  },
-  ASSERT_NOT_VISIBLE: {
-    label: 'Element Not Visible',
-    fields: ['locator'],
-    required: ['locator']
-  },
-  ASSERT_TEXT_EQUALS: {
-    label: 'Assert Column Value(s)',
-    fields: ['tableId', 'columnName', 'expected'],
-    required: ['tableId', 'columnName', 'expected']
-  },
-  ASSERT_TEXT_CONTAINS: {
-    label: 'Text Contains',
-    fields: ['locator', 'expected'],
-    required: ['locator', 'expected']
-  },
-  ASSERT_COLUMN_PRESENT: {
-    label: 'Column(s) Present',
-    fields: ['tableId', 'columnName'],
-    required: ['tableId', 'columnName']
-  },
-  ASSERT_COUNT: {
-    label: 'Pagination',
-    fields: ['tableId', 'rowsBtn'],
-    required: ['tableId', 'rowsBtn']
-  },
-  ASSERT_SORT_ORDER: {
-    label: 'Sort Order',
-    fields: ['tableId', 'columnName', 'order'],
-    required: ['tableId', 'columnName', 'order']
-  },
-  ASSERT_ATTRIBUTE: {
-    label: 'Attribute',
-    fields: ['locator', 'expected'],
-    required: ['locator', 'expected']
-  },
-  ASSERT_AI: {
-    label: 'Assert With AI',
-    fields: ['promptAi'],
-    required: ['promptAi']
-  },
-  ASSERT_FILTER: {
-    label: 'Assert Table Filter',
-    fields: ['tableId'],
-    required: ['tableId']
-  },
-  ASSERT_MANAGE_COLUMN: {
-    label: 'Assert Manage Column',
-    fields: ['tableId'],
-    required: ['tableId']
-  },
-  ASSERT_ROWS_COUNT: {
-    label: 'Assert Table Rows',
-    fields: ['tableId'],
-    required: ['tableId']
-  }
+  ASSERT_VISIBLE:        { label: 'Element Visible',       fields: ['locator'],                        required: ['locator'] },
+  ASSERT_NOT_VISIBLE:    { label: 'Element Not Visible',   fields: ['locator'],                        required: ['locator'] },
+  ASSERT_TEXT_CONTAINS:  { label: 'Text Contains',         fields: ['locator', 'expected'],             required: ['locator', 'expected'] },
+  ASSERT_TEXT_EQUALS:    { label: 'Assert Column Value(s)',fields: ['tableId', 'columnName', 'expected'],required: ['tableId', 'columnName', 'expected'] },
+  ASSERT_COLUMN_PRESENT: { label: 'Column(s) Present',     fields: ['tableId', 'columnName'],           required: ['tableId', 'columnName'] },
+  ASSERT_SORT_ORDER:     { label: 'Sort Order',            fields: ['tableId', 'columnName', 'order'],  required: ['tableId', 'columnName', 'order'] },
+  ASSERT_COUNT:          { label: 'Pagination',            fields: ['tableId', 'rowsBtn'],              required: ['tableId', 'rowsBtn'] },
+  ASSERT_ATTRIBUTE:      { label: 'Attribute',             fields: ['locator', 'expected'],             required: ['locator', 'expected'] },
+  ASSERT_AI:             { label: 'Assert With AI',        fields: ['promptAi'],                        required: ['promptAi'] },
+  ASSERT_FILTER:         { label: 'Assert Table Filter',   fields: ['tableId'],                         required: ['tableId'] },
+  ASSERT_MANAGE_COLUMN:  { label: 'Assert Manage Column',  fields: ['tableId'],                         required: ['tableId'] },
+  ASSERT_ROWS_COUNT:     { label: 'Assert Table Rows',     fields: ['tableId'],                         required: ['tableId'] },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
