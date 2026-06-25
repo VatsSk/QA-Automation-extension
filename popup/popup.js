@@ -1546,8 +1546,26 @@ async function saveRun() {
 }
 
 // ── Clear run ─────────────────────────────────────────────────────────────────
+function showConfirm(msg) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('confirm-overlay');
+    document.getElementById('confirm-msg').textContent = msg;
+    overlay.style.display = 'flex';
+    const ok = document.getElementById('confirm-ok');
+    const cancel = document.getElementById('confirm-cancel');
+    const cleanup = (result) => {
+      overlay.style.display = 'none';
+      ok.replaceWith(ok.cloneNode(true));
+      cancel.replaceWith(cancel.cloneNode(true));
+      resolve(result);
+    };
+    document.getElementById('confirm-ok').addEventListener('click', () => cleanup(true));
+    document.getElementById('confirm-cancel').addEventListener('click', () => cleanup(false));
+  });
+}
+
 async function clearRun() {
-  if (!confirm('Clear current run? This cannot be undone.')) return;
+  if (!await showConfirm('Clear current run? This cannot be undone.')) return;
   state = {
     runName: '',
     runType: 'manual',

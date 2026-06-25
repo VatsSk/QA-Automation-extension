@@ -77,7 +77,7 @@
         <span class="cp-field-type" id="cp-field-type"></span>
       </div>
 
-      <div class="cp-buttons">
+      <div class="cp-buttons" style="display:none;">
         <button class="cp-btn locator" id="btn-capture-locator" title="Capture CSS/XPath selector">🎯 Locator</button>
         <button class="cp-btn value" id="btn-capture-value" title="Capture element value / text">📋 Value</button>
         <button class="cp-btn both" id="btn-capture-both" title="Capture locator AND value together">⚡ Both</button>
@@ -103,6 +103,16 @@
     <span class="save-status" id="save-status">● Unsaved</span>
     <button class="btn-secondary" id="btn-auto-save">Auto-saved</button>
     <button class="btn-primary" id="btn-save-run">Save Run →</button>
+  </div>
+
+  <div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:20px;min-width:260px;max-width:320px">
+      <p id="confirm-msg" style="margin:0 0 16px;color:var(--text-pri);font-size:13px"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="confirm-cancel" class="btn-secondary">Cancel</button>
+        <button id="confirm-ok" class="btn-primary" style="background:var(--red);border-color:var(--red)">Clear</button>
+      </div>
+    </div>
   </div>
 
   <script src="../scenario-builder/schema.js"></script>
