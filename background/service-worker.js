@@ -88,13 +88,12 @@ chrome.runtime.onMessageExternal.addListener(
           moduleId: msg.moduleId,
           createdBy: msg.createdBy,
           url: msg.url,
-          csvPath: msg.csvPath
+          csvPath: msg.csvPath,
+          runId: msg.runId || null,
+          existingRun: msg.existingRun || null
         });
 
-        sendResponse({
-          success: true
-        });
-
+        sendResponse({ success: true });
         break;
     }
 

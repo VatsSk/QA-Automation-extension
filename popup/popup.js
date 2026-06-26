@@ -28,6 +28,7 @@ let projectId = params.get('projectId') || null;
 let moduleId = params.get('moduleId') || null;
 let authToken = params.get('authToken') || null;
 let targetTabId = parseInt(params.get('tabId')) || null;
+let editRunId = null; // set when editing an existing run
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -86,7 +87,7 @@ async function restoreState() {
     }
 
     // Restore projectId/moduleId from storage if not in URL
-    const extra = await Storage.get(['projectId', 'moduleId', 'authToken']);
+    const extra = await Storage.get(['projectId', 'moduleId', 'authToken', 'runId', 'existingRun']);
 
     if (!projectId && extra.projectId) {
       projectId = extra.projectId;
@@ -104,6 +105,14 @@ async function restoreState() {
       authToken = extra.authToken;
     } else if (authToken) {
       await Storage.set({ authToken });
+    }
+
+    // Edit mode — load existing run and clear it so next open is fresh
+    if (extra.runId && extra.existingRun) {
+      editRunId = extra.runId;
+      loadExistingRun(extra.existingRun);
+      await Storage.set({ runId: null, existingRun: null });
+      showToast('Editing existing run', 'success');
     }
   } catch (e) {
     console.warn('[QA] Could not restore state:', e);
@@ -126,6 +135,61 @@ function normalizeState() {
   if (state.activeScenarioIdx >= state.scenarios.length) {
     state.activeScenarioIdx = Math.max(0, state.scenarios.length - 1);
   }
+}
+
+// Map backend run object → extension state
+function loadExistingRun(run) {
+  state.runName        = run.runName        || '';
+  state.runType        = run.runType        || 'manual';
+  state.tags           = Array.isArray(run.tags) ? run.tags.join(', ') : (run.tags || '');
+  state.resultStatement = run.resultStatement || '';
+
+  state.scenarios = (run.scenariosList || []).map((sc) => ({
+    id: sc.id || Date.now() + Math.random(),
+    isSystemScenario: sc.sequenceNo === 1,
+    type: sc.type || 'URL',
+    fields: {
+      url:         sc.url         || '',
+      cssSelector: sc.cssOpener   || '',
+      value:       sc.value       || '',
+      clickCss:    sc.clickCss    || '',
+      saveBtnCss:  sc.saveBtnCss  || '',
+      applyBtnCss: sc.applyFilterBtn || '',
+    },
+    csv: sc.csv || '',
+    assertions: (sc.assertions || []).map(a => ({
+      type:       a.type,
+      locator:    a.locator    || '',
+      expected:   a.payload    || '',
+      tableId:    a.tableId    || '',
+      columnName: a.colName    || '',
+      rowsBtn:    a.rowsBtn    || '',
+      order:      a.order      || '',
+      promptAi:   a.prompt     || '',
+    })),
+    filters: (sc.filters || []).map(f => ({
+      locator:    f.locator    || '',
+      filterType: f.filterType || '',
+      value:      f.value      || '',
+    })),
+    columns: (sc.columns || []).map(c => ({
+      name:     c.name,
+      action:   c.action,
+      position: c.position,
+    })),
+    dateRange: sc.dateRangeNavDto ? {
+      preset: sc.dateRangeNavDto.preset || 'THIS_WEEK',
+      custom: (sc.dateRangeNavDto.startDate || sc.dateRangeNavDto.endDate) ? {
+        start: sc.dateRangeNavDto.startDate,
+        end:   sc.dateRangeNavDto.endDate
+      } : null
+    } : { preset: 'THIS_WEEK', custom: null },
+    csvUploads: [],
+    initialVerifications: (sc.initialVerify || []).map(v => ({ locator: v.cssSelector || '', value: v.expectedResult || '' })),
+    finalVerifications:   (sc.finalVerify   || []).map(v => ({ locator: v.cssSelector || '', value: v.expectedResult || '' })),
+  }));
+
+  state.activeScenarioIdx = 0;
 }
 
 // ── System URL scenario injection ─────────────────────────────────────────────
@@ -1524,10 +1588,15 @@ async function saveRun() {
   btn.textContent = 'Saving…';
 
   try {
-    await ApiClient.saveRun({ projectId, moduleId, authToken, payload });
+    if (editRunId) {
+      await ApiClient.updateRun({ projectId, moduleId, runId: editRunId, authToken, payload });
+    } else {
+      await ApiClient.saveRun({ projectId, moduleId, authToken, payload });
+    }
     await Storage.clear();
     showToast('Run saved!', 'success');
     setSaveStatus('● Saved', 'saved');
+    editRunId = null;
     
     // Reset extension state
     state = {

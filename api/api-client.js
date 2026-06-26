@@ -26,6 +26,28 @@ const ApiClient = {
     return res.json();
   },
 
+  async updateRun({ projectId, moduleId, runId, authToken, payload }) {
+    if (!projectId || !moduleId || !runId) {
+      throw new Error('Cannot update run: Project ID, Module ID or Run ID is missing.');
+    }
+
+    const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}/modules/${moduleId}/runs/${runId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API ${res.status}: ${err}`);
+    }
+
+    return res.json();
+  },
+
   async uploadCsv({ projectId, moduleId, runId = '', sequenceNo, file, authToken }) {
     const form = new FormData();
     form.append('file', file);
