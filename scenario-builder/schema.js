@@ -68,7 +68,7 @@ const TYPES = {
     icon: '✓',
     color: 'var(--gr)',
     bg: 'var(--gr-d)',
-    fields: ['url', 'cssSelector'],
+    fields: ['url'],
     hasData: false,
     hint: 'Verify page content'
   },
@@ -262,7 +262,7 @@ const REQUIRED = {
   URL_NAV:        ['url'],
   MODAL_NAV:      ['cssSelector'],
   SEARCH_NAV:     ['cssSelector', 'value'],
-  VERIFY_PAGE:    ['url', 'cssSelector'],
+  VERIFY_PAGE:    ['url'],
   FORM_MODAL:     [],
   ASSERT:         [],
   FILTER_NAV:     ['applyBtnCss'],

@@ -88,19 +88,9 @@
       };
     },
 
-    // Extract a human-readable value from the element
+    // Extract visible text shown to the user — used for verification value only
     extractValue(el) {
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-        return el.value ?? el.getAttribute('placeholder') ?? '';
-      }
-      if (el.tagName === 'SELECT') {
-        return el.options[el.selectedIndex]?.value ?? '';
-      }
-      const ariaLabel = el.getAttribute('aria-label');
-      if (ariaLabel) return ariaLabel;
-      const text = el.textContent?.trim();
-      if (text) return text;
-      return el.getAttribute('value') ?? el.getAttribute('data-value') ?? '';
+      return (el.innerText || el.textContent || '').trim();
     },
 
     // Full info dump for hover tooltip

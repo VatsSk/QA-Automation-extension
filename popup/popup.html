@@ -18,7 +18,7 @@
     <div class="titlebar-right">
       <button class="tb-btn" id="btn-toggle-meta" title="Hide / show run information">Info</button>
       <button class="tb-btn" id="btn-toggle-json" title="Show / hide JSON preview">JSON</button>
-      <button class="tb-btn" id="btn-toggle-size" title="Minimize / maximize layout">▣</button>
+      <button class="tb-btn" id="btn-toggle-size" title="Minimize / maximize layout" style="display:none;">▣</button>
       <button class="tb-btn" id="btn-clear" title="Clear current run">↺</button>
       <button class="tb-btn danger" id="btn-close" title="Close recorder">✕</button>
     </div>
@@ -53,7 +53,7 @@
         </div>
       </div>
 
-      <div class="field-row">
+      <div class="field-row" style="display:none;">
         <label class="field-label">Result Statement</label>
         <textarea id="run-result" class="field-textarea" rows="2" placeholder="User can log in with valid credentials"></textarea>
       </div>
