@@ -60,6 +60,11 @@ function initServiceWorker() {
       case 'CAPTURE_RESULT':
         handleCaptureResult(msg.captureMode, msg.result);
         break;
+      case 'RELOAD_SESSION':
+        restoreState().then(() => {
+          ensureSystemScenario().then(() => render());
+        });
+        break;
     }
   });
 }
@@ -79,41 +84,53 @@ function updateTabLabel() {
 // ── State persistence ─────────────────────────────────────────────────────────
 async function restoreState() {
   try {
+    const extra = await Storage.get(['projectId', 'moduleId', 'authToken', 'runId', 'existingRun']);
+
+    // ── New session fired from web app ────────────────────────────────────────
+    if (extra.existingRun || extra.runId) {
+      // Edit mode — clear draft, load existing run
+      await Storage.clear();
+      editRunId = extra.runId || null;
+      projectId = extra.projectId || projectId;
+      moduleId  = extra.moduleId  || moduleId;
+      authToken = extra.authToken || authToken;
+      loadExistingRun(extra.existingRun);
+      await Storage.set({ runId: null, existingRun: null, projectId, moduleId, authToken });
+      showToast('Editing existing run', 'success');
+      return;
+    }
+
+    // Check if this is a fresh new-run trigger (projectId just written, no draft)
     const saved = await Storage.load();
+    const isFreshTrigger = extra.projectId && (!saved || !saved.runName);
+
+    if (isFreshTrigger) {
+      // New run from web app — clear any stale draft
+      await Storage.clear();
+      projectId = extra.projectId || projectId;
+      moduleId  = extra.moduleId  || moduleId;
+      authToken = extra.authToken || authToken;
+      editRunId = null;
+      await Storage.set({ projectId, moduleId, authToken });
+      return;
+    }
+
+    // ── Normal draft restore ──────────────────────────────────────────────────
     if (saved) {
       state = { ...state, ...saved };
       normalizeState();
       showToast('Draft restored', 'success');
     }
 
-    // Restore projectId/moduleId from storage if not in URL
-    const extra = await Storage.get(['projectId', 'moduleId', 'authToken', 'runId', 'existingRun']);
+    if (!projectId && extra.projectId) projectId = extra.projectId;
+    else if (projectId) await Storage.set({ projectId });
 
-    if (!projectId && extra.projectId) {
-      projectId = extra.projectId;
-    } else if (projectId) {
-      await Storage.set({ projectId });
-    }
+    if (!moduleId && extra.moduleId) moduleId = extra.moduleId;
+    else if (moduleId) await Storage.set({ moduleId });
 
-    if (!moduleId && extra.moduleId) {
-      moduleId = extra.moduleId;
-    } else if (moduleId) {
-      await Storage.set({ moduleId });
-    }
+    if (!authToken && extra.authToken) authToken = extra.authToken;
+    else if (authToken) await Storage.set({ authToken });
 
-    if (!authToken && extra.authToken) {
-      authToken = extra.authToken;
-    } else if (authToken) {
-      await Storage.set({ authToken });
-    }
-
-    // Edit mode — load existing run and clear it so next open is fresh
-    if (extra.runId && extra.existingRun) {
-      editRunId = extra.runId;
-      loadExistingRun(extra.existingRun);
-      await Storage.set({ runId: null, existingRun: null });
-      showToast('Editing existing run', 'success');
-    }
   } catch (e) {
     console.warn('[QA] Could not restore state:', e);
   }

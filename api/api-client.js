@@ -31,7 +31,7 @@ const ApiClient = {
       throw new Error('Cannot update run: Project ID, Module ID or Run ID is missing.');
     }
 
-    const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}/modules/${moduleId}/runs/${runId}`, {
+    const res = await fetch(`${API_BASE_URL}/api/runs/${runId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',

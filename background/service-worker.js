@@ -91,6 +91,8 @@ chrome.runtime.onMessageExternal.addListener(
           csvPath: msg.csvPath,
           runId: msg.runId || null,
           existingRun: msg.existingRun || null
+        }).then(() => {
+          notifyPopup({ type: 'RELOAD_SESSION' });
         });
 
         sendResponse({ success: true });
