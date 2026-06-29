@@ -9,6 +9,7 @@ let isCreatingWindow = false;   // Guard against onActivated race during window 
 
 // ── Open / focus the recorder window when the toolbar icon is clicked ────────
 chrome.action.onClicked.addListener(async (tab) => {
+  if (isCreatingWindow) return;
   targetTabId = tab.id;
 
   if (recorderWindowId !== null) {
@@ -170,18 +171,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const injectionPromises = new Map();
+
 async function ensureContentScript(tabId) {
   if (!tabId) return;
+
+  if (injectionPromises.has(tabId)) {
+    return injectionPromises.get(tabId);
+  }
+
+  const promise = (async () => {
+    try {
+      // Ping first — if content script already alive, no need to re-inject
+      await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+    } catch (_) {
+      // Not injected yet — inject all content files
+      await chrome.scripting.insertCSS({ target: { tabId }, files: ['content/overlay.css'] }).catch(() => {});
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['locator-engine/locator-generator.js'] }).catch(() => {});
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content/overlay.js'] }).catch(() => {});
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content/content.js'] }).catch(() => {});
+    }
+  })();
+
+  injectionPromises.set(tabId, promise);
   try {
-    // Ping first — if content script already alive, no need to re-inject
-    await chrome.tabs.sendMessage(tabId, { type: 'PING' });
-  } catch (_) {
-    // Not injected yet — inject all content files
-    await chrome.scripting.insertCSS({ target: { tabId }, files: ['content/overlay.css'] }).catch(() => {});
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['locator-engine/locator-generator.js'] }).catch(() => {});
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/overlay.js'] }).catch(() => {});
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/content.js'] }).catch(() => {});
+    await promise;
+  } finally {
+    injectionPromises.delete(tabId);
   }
 }
 
