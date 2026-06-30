@@ -41,7 +41,7 @@
       highlight.className = `capture-${captureMode.toLowerCase()}`;
       highlight.style.display = 'block';
       tooltip.style.display = 'none';
-      banner.style.display = 'block';
+      banner.style.display = 'none';
       banner.className = `mode-${captureMode.toLowerCase()}`;
 
       const modeLabel = captureMode === 'BOTH'
