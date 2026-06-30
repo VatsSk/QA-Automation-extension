@@ -1505,14 +1505,14 @@ async function buildPayload() {
     return {
       sequenceNo: i + 1,
       type: sc.type,
-      url: f.url || '',
-      cssOpener: f.cssSelector || '',
-      value: f.value || '',
-      clickCss: f.clickCss || '',
-      applyFilterBtn: f.applyFilterBtn || '',
-      saveBtnCss: f.saveBtnCss || '',
-      csv: sc.csv || '',
-      statement: f.statement || '',
+      url: f.url || null,
+      cssOpener: f.cssSelector || null,
+      value: f.value || null,
+      clickCss: f.clickCss || null,
+      applyFilterBtn: f.applyFilterBtn || null,
+      saveBtnCss: f.saveBtnCss || null,
+      csv: sc.csv || null,
+      statement: f.statement || null,
 
       assertions: Array.isArray(sc.assertions) ? sc.assertions.map(a => ({
         type: a.type,
@@ -1560,7 +1560,7 @@ async function buildPayload() {
   return {
     runName: state.runName,
     runType: state.runType,
-    createdBy: result.createdBy || 'user',
+    createdBy: result.createdBy,
     projectId: result.projectId,
     moduleId: result.moduleId,
     tags: state.tags.split(',').map(t => t.trim()).filter(Boolean),
