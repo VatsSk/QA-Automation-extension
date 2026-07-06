@@ -1364,9 +1364,21 @@ function startCapture(mode) {
   renderCapturePanel();
 
   chrome.runtime.sendMessage({ type: 'START_CAPTURE', captureMode: mode }, (res) => {
-    if (!res?.ok) {
+    if (chrome.runtime.lastError || !res?.ok) {
       isCapturing = false;
-      showToast('Could not inject capture script', 'error');
+
+      let reason = res?.error || chrome.runtime.lastError?.message || 'Unknown error';
+
+      // Chrome returns this internal message when the SW closes the port early;
+      // replace it with something actionable for the user.
+      if (!res?.error && reason.includes('message port closed')) {
+        reason = 'Capture failed — navigate to a normal webpage (not chrome:// or a PDF) and try again.';
+      }
+
+      // Truncate very long messages so they fit in the toast
+      if (reason.length > 120) reason = reason.slice(0, 117) + '…';
+
+      showToast(reason, 'error');
       renderCapturePanel();
     }
   });

@@ -26,15 +26,23 @@
         }
 
         window.QAOverlay.start(mode, (captureMode, result) => {
-          // result is null if user pressed Escape
-          chrome.runtime.sendMessage({
-            type: 'CAPTURE_RESULT',
-            captureMode,
-            result
-          });
-
-          // Bring the recorder window back into focus after capture
-          chrome.runtime.sendMessage({ type: 'FOCUS_RECORDER' });
+          try {
+            // result is null if user pressed Escape
+            chrome.runtime.sendMessage({
+              type: 'CAPTURE_RESULT',
+              captureMode,
+              result
+            });
+            // Bring the recorder window back into focus after capture
+            chrome.runtime.sendMessage({ type: 'FOCUS_RECORDER' });
+          } catch (e) {
+            if (e.message.includes('Extension context invalidated')) {
+              alert('QA Extension was updated. Please refresh this page to continue capturing elements.');
+              if (window.QAOverlay) window.QAOverlay.stop();
+            } else {
+              console.error('[QA] Send message failed:', e);
+            }
+          }
         });
 
         sendResponse({ ok: true });

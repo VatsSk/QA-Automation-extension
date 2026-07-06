@@ -36,7 +36,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     url: chrome.runtime.getURL(
       `${htmlFile}?tabId=${tab.id}&windowId=SELF`
     ),
-    type: 'panel',   // panel stays on top and does not close on page click
+    type: 'popup',   // 'popup' opens a clean detached window without tabs
     width:  saved.winW || 720,
     height: saved.winH || 820,
     focused: true
@@ -134,9 +134,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // Popup asks: who is the current target tab?
     case 'POPUP_INIT': {
-      ensureContentScript(targetTabId).then(() => {
-        sendResponse({ tabId: targetTabId });
-      });
+      ensureContentScript(targetTabId)
+        .then(() => {
+          sendResponse({ tabId: targetTabId });
+        })
+        .catch((err) => {
+          console.warn('[QA] Initial injection skipped:', err.message);
+          sendResponse({ tabId: targetTabId });
+        });
       return true; // async
     }
 
@@ -205,13 +210,64 @@ async function ensureContentScript(tabId) {
   }
 
   const promise = (async () => {
+    // ── Guard: check if the tab exists and is on an injectable page ───────────
+    let tab;
     try {
-      await chrome.scripting.insertCSS({ target: { tabId }, files: ['content/overlay.css'] }).catch(() => {});
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['locator-engine/locator-generator.js'] }).catch(() => {});
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['content/overlay.js'] }).catch(() => {});
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['content/content.js'] }).catch(() => {});
-    } catch (err) {
-      console.warn('[QA] Failed to inject content scripts:', err);
+      tab = await chrome.tabs.get(tabId);
+    } catch (_) {
+      throw new Error('Tab no longer exists');
+    }
+
+    const url = tab.url || '';
+    if (
+      url.startsWith('chrome://') ||
+      url.startsWith('chrome-extension://') ||
+      url.startsWith('about:') ||
+      url.startsWith('edge://') ||
+      url.startsWith('devtools://') ||
+      url === '' // new tab page before URL loads
+    ) {
+      throw new Error(
+        `Cannot inject scripts on restricted page: ${url || '(new tab)'}.\nNavigate to a regular website first.`
+      );
+    }
+
+    // ── Ping first — if content script is already alive, no need to re-inject ─
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+      return; // already injected and responsive
+    } catch (_) {
+      // Not injected yet — fall through to injection
+    }
+
+    // ── Inject all content files ──────────────────────────────────────────────
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: ['content/overlay.css']
+    }).catch((e) => console.warn('[QA] CSS inject failed:', e.message));
+
+    for (const file of [
+      'locator-engine/locator-generator.js',
+      'content/overlay.js',
+      'content/content.js'
+    ]) {
+      await chrome.scripting.executeScript({ target: { tabId }, files: [file] });
+    }
+
+    // ── Verify the scripts are actually live with a post-inject PING ──────────
+    // Retry a few times since scripts may not register their listener instantly
+    let alive = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+        alive = true;
+        break;
+      } catch (_) {
+        await new Promise(r => setTimeout(r, 150));
+      }
+    }
+    if (!alive) {
+      throw new Error('Scripts injected but content script did not respond. Try clicking the element again.');
     }
   })();
 
