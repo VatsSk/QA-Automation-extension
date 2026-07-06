@@ -12,6 +12,12 @@
   let captureMode = 'BOTH';
   let captureCallback = null;
   let lastTarget = null;
+  
+  // Smart Flow State
+  let smartRecording = false;
+  let smartPaused = false;
+  let smartVerification = false;
+  let smartHoverCapture = false;
 
   // ── DOM elements ──────────────────────────────────────────────────────────
   const highlight = document.createElement('div');
@@ -62,8 +68,265 @@
       active = false;
       captureCallback = null;
       cleanup();
+    },
+
+    handleSmartCommand(command) {
+      switch (command) {
+        case 'START_RECORDING':
+          smartRecording = true;
+          smartPaused = false;
+          // Enable highlight on hover during recording
+          highlight.className = 'capture-smart';
+          highlight.style.display = 'block';
+          document.addEventListener('mouseover', onSmartMouseOver, true);
+          document.addEventListener('mouseout', onSmartMouseOut, true);
+          bindSmartListeners();
+          break;
+        case 'STOP_RECORDING':
+          smartRecording = false;
+          smartPaused = false;
+          smartVerification = false;
+          unbindSmartListeners();
+          document.removeEventListener('mouseover', onSmartMouseOver, true);
+          document.removeEventListener('mouseout', onSmartMouseOut, true);
+          highlight.style.display = 'none';
+          tooltip.style.display = 'none';
+          cleanup();
+          break;
+        case 'PAUSE_RECORDING':
+          smartPaused = true;
+          highlight.style.display = 'none';
+          document.removeEventListener('mouseover', onSmartMouseOver, true);
+          document.removeEventListener('mouseout', onSmartMouseOut, true);
+          break;
+        case 'START_VERIFICATION':
+          smartVerification = true;
+          active = true;
+          document.body.classList.add('qa-capturing');
+          highlight.className = 'capture-locator';
+          highlight.style.display = 'block';
+          break;
+        case 'STOP_VERIFICATION':
+          smartVerification = false;
+          highlight.className = 'capture-smart';
+          if (!captureCallback) {
+            active = false;
+            document.body.classList.remove('qa-capturing');
+            tooltip.style.display = 'none';
+          }
+          break;
+        case 'START_HOVER_CAPTURE':
+          smartHoverCapture = true;
+          active = true;
+          document.body.classList.add('qa-capturing');
+          highlight.className = 'capture-hover';
+          highlight.style.display = 'block';
+          break;
+        case 'STOP_HOVER_CAPTURE':
+          smartHoverCapture = false;
+          highlight.className = 'capture-smart';
+          if (!captureCallback && !smartVerification) {
+            active = false;
+            document.body.classList.remove('qa-capturing');
+            tooltip.style.display = 'none';
+          }
+          break;
+      }
     }
   };
+  // ── Smart Hover Highlight ────────────────────────────────────────────────
+  function onSmartMouseOver(e) {
+    if (!smartRecording || smartPaused) return;
+    const el = e.target;
+    if (el === highlight || el === tooltip || el === banner) return;
+
+    // Only highlight interactive elements
+    const interactive = findInteractiveAncestor(el);
+    if (!interactive) {
+      highlight.style.top = '-9999px';
+      return;
+    }
+
+    const rect = interactive.getBoundingClientRect();
+    highlight.style.top    = `${rect.top    - 2}px`;
+    highlight.style.left   = `${rect.left   - 2}px`;
+    highlight.style.width  = `${rect.width  + 4}px`;
+    highlight.style.height = `${rect.height + 4}px`;
+
+    // Build rich tooltip
+    if (window.LocatorGenerator) {
+      const info = window.LocatorGenerator.getElementInfo(interactive);
+      renderTooltip(info, rect);
+    }
+  }
+
+  function onSmartMouseOut(e) {
+    if (e.relatedTarget === highlight || e.relatedTarget === tooltip) return;
+    highlight.style.top = '-9999px';
+    tooltip.style.display = 'none';
+  }
+
+  // ── Smart Event Listeners ─────────────────────────────────────────────────
+  // ONLY listens on click. No browser events (change/input) are recorded.
+  // On click, we inspect the element and create the correct step type.
+  function bindSmartListeners() {
+    document.addEventListener('click', onSmartClick, true);
+  }
+
+  function unbindSmartListeners() {
+    document.removeEventListener('click', onSmartClick, true);
+  }
+
+  function dispatchSmartStep(action, el, value = '') {
+    if (!smartRecording || smartPaused || smartVerification || smartHoverCapture) return;
+    if (!window.LocatorGenerator) return;
+
+    const loc = window.LocatorGenerator.generate(el);
+    const info = window.LocatorGenerator.getElementInfo(el);
+    
+    const stepData = {
+      action: action,
+      target: {
+        tag: info.tag,
+        id: info.id,
+        classes: info.classes,
+        cssSelector: loc.bestLocator,
+        customLocator: loc.locators.custom || '',
+        attributes: { type: info.type }
+      },
+      value: value
+    };
+
+    document.dispatchEvent(new CustomEvent('qa-step-recorded', { detail: stepData }));
+  }
+
+  // Walk up the DOM to find the nearest meaningful interactive element.
+  // Returns null if nothing interactive is found — plain text is ignored.
+  function findInteractiveAncestor(el) {
+    const interactiveTags = new Set(['input', 'select', 'textarea', 'button', 'a']);
+    let node = el;
+    for (let i = 0; i < 6 && node && node !== document.body; i++) {
+      const tag = node.tagName.toLowerCase();
+      if (interactiveTags.has(tag)) return node;
+      const role = node.getAttribute('role');
+      if (role && ['button', 'checkbox', 'radio', 'link', 'tab', 'menuitem', 'option', 'switch'].includes(role)) return node;
+      // Check for clickable attributes
+      if (node.onclick || node.getAttribute('ng-click') || node.getAttribute('@click') || node.getAttribute('data-action')) return node;
+      node = node.parentElement;
+    }
+    return el; // Return original element instead of null
+  }
+
+  // Inspect the element and decide what step type to create
+  function detectStepFromElement(el) {
+    const tag = (el.tagName || '').toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+
+    if (tag === 'input') {
+      if (['text', 'password', 'email', 'number', 'search', 'url', 'tel', ''].includes(type)) {
+        return { action: 'type', value: el.value || '' };
+      }
+      if (type === 'checkbox') return { action: 'check', value: el.checked ? 'Checked' : 'Unchecked' };
+      if (type === 'radio')    return { action: 'check', value: el.checked ? 'Selected' : 'Unselected' };
+      if (type === 'file')     return { action: 'upload', value: '' };
+      if (type === 'date' || type === 'datetime-local') return { action: 'date', value: el.value || '' };
+      return { action: 'click', value: '' };
+    }
+    if (tag === 'textarea') return { action: 'type', value: el.value || '' };
+    if (tag === 'select')   return { action: 'select', value: el.options?.[el.selectedIndex]?.text || el.value || '' };
+    if (tag === 'button')   return { action: 'click', value: '' };
+    if (tag === 'a')        return { action: 'click', value: '' };
+
+    // Elements matched by role or click handler
+    const role = el.getAttribute('role');
+    if (role === 'checkbox') return { action: 'check', value: el.getAttribute('aria-checked') === 'true' ? 'Checked' : 'Unchecked' };
+    if (role === 'radio')    return { action: 'check', value: el.getAttribute('aria-checked') === 'true' ? 'Selected' : 'Unselected' };
+    if (role === 'switch')   return { action: 'check', value: el.getAttribute('aria-checked') === 'true' ? 'On' : 'Off' };
+
+    return { action: 'click', value: '' };
+  }
+
+  let lastClickTime = 0;
+  let lastClickTarget = null;
+
+  function onSmartClick(e) {
+    if (!smartRecording || smartPaused) return;
+    if (!e.isTrusted) return;
+
+    // Deduplicate
+    const now = Date.now();
+    if (now - lastClickTime < 400) return;
+    lastClickTime = now;
+
+    if (smartHoverCapture) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      const el = e.target;
+      if (el === highlight || el === tooltip || el === banner) return;
+
+      if (window.LocatorGenerator) {
+        const loc = window.LocatorGenerator.generate(el);
+        const info = window.LocatorGenerator.getElementInfo(el);
+        const data = {
+          action: 'hover',
+          target: {
+            tag: info.tag,
+            id: info.id,
+            cssSelector: loc.bestLocator,
+            customLocator: loc.locators.custom || '',
+            attributes: { type: info.type }
+          },
+          value: ''
+        };
+        // Use regular step recorded since it translates directly to a hover step
+        document.dispatchEvent(new CustomEvent('qa-step-recorded', { detail: data }));
+        
+        // Notify popup to toggle hover capture mode off
+        chrome.runtime.sendMessage({ type: 'TOGGLE_HOVER_MODE_OFF' });
+        window.QAOverlay.handleSmartCommand('STOP_HOVER_CAPTURE');
+      }
+      return;
+    }
+
+    if (smartVerification) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      
+      const el = e.target;
+      if (el === highlight || el === tooltip || el === banner) return;
+      
+      if (window.LocatorGenerator) {
+        const loc = window.LocatorGenerator.generate(el);
+        const info = window.LocatorGenerator.getElementInfo(el);
+        const data = {
+          tag: info.tag,
+          id: info.id,
+          cssSelector: loc.bestLocator,
+          customLocator: loc.locators.custom || '',
+          attributes: { type: info.type },
+          text: info.textContent || '',
+          value: info.value || ''
+        };
+        document.dispatchEvent(new CustomEvent('qa-element-captured', { detail: data }));
+      }
+      return;
+    }
+    
+    if (active && captureCallback) return;
+
+    let el = e.target;
+    if (el === highlight || el === tooltip || el === banner) return;
+
+    // Resolve to the nearest interactive element — if none found, ignore
+    el = findInteractiveAncestor(el);
+    if (!el) return; // Plain text click → do nothing
+
+    const { action, value } = detectStepFromElement(el);
+    dispatchSmartStep(action, el, value);
+  }
 
   // ── Event handlers ────────────────────────────────────────────────────────
   function onMouseOver(e) {
@@ -92,7 +355,8 @@
   }
 
   function onClick(e) {
-    if (!active) return;
+    if (!active || !captureCallback) return; // Only block if explicit manual capture
+    
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
@@ -127,8 +391,17 @@
   function onKeyDown(e) {
     if (!active) return;
     if (e.key === 'Escape') {
-      cleanup();
-      if (captureCallback) captureCallback(captureMode, null); // null = cancelled
+      if (smartVerification) {
+        window.QAOverlay.handleSmartCommand('STOP_VERIFICATION');
+        // Let popup know
+        chrome.runtime.sendMessage({ type: 'TOGGLE_VERIFICATION_MODE' });
+      } else if (smartHoverCapture) {
+        window.QAOverlay.handleSmartCommand('STOP_HOVER_CAPTURE');
+        chrome.runtime.sendMessage({ type: 'TOGGLE_HOVER_MODE_OFF' });
+      } else {
+        cleanup();
+        if (captureCallback) captureCallback(captureMode, null); // null = cancelled
+      }
     }
   }
 
