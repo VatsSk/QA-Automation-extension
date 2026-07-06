@@ -170,10 +170,12 @@
   // ONLY listens on click. No browser events (change/input) are recorded.
   // On click, we inspect the element and create the correct step type.
   function bindSmartListeners() {
+    document.addEventListener('mousedown', onSmartClick, true);
     document.addEventListener('click', onSmartClick, true);
   }
 
   function unbindSmartListeners() {
+    document.removeEventListener('mousedown', onSmartClick, true);
     document.removeEventListener('click', onSmartClick, true);
   }
 
@@ -203,7 +205,7 @@
   // Walk up the DOM to find the nearest meaningful interactive element.
   // Returns null if nothing interactive is found — plain text is ignored.
   function findInteractiveAncestor(el) {
-    const interactiveTags = new Set(['input', 'select', 'textarea', 'button', 'a']);
+    const interactiveTags = new Set(['input', 'select', 'textarea', 'button', 'a', 'li', 'label']);
     let node = el;
     for (let i = 0; i < 6 && node && node !== document.body; i++) {
       const tag = node.tagName.toLowerCase();
@@ -253,10 +255,14 @@
     if (!smartRecording || smartPaused) return;
     if (!e.isTrusted) return;
 
-    // Deduplicate
+    // Deduplicate mousedown + click
     const now = Date.now();
-    if (now - lastClickTime < 400) return;
+    if (e.type === 'click') {
+      if (now - lastClickTime < 400) return;
+      if (lastClickTarget === e.target && now - lastClickTime < 2000) return;
+    }
     lastClickTime = now;
+    lastClickTarget = e.target;
 
     if (smartHoverCapture) {
       e.preventDefault();
