@@ -67,5 +67,45 @@ const ApiClient = {
       throw new Error(`Upload failed (${res.status}): ${err}`);
     }
     return res.json(); // Expected: { path, url, filename, sizeBytes }
+  },
+
+  // ── Flow API ────────────────────────────────────────────────────────────────
+
+  async saveFlowDraft({ authToken, payload }) {
+    const res = await fetch(`${API_BASE_URL}/api/flows/draft`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API ${res.status}: ${err}`);
+    }
+    return res.json();
+  },
+
+  async updateFlowDraft({ flowId, authToken, payload }) {
+    if (!flowId) {
+      throw new Error('Cannot update flow: Flow ID is missing.');
+    }
+
+    const res = await fetch(`${API_BASE_URL}/api/flows/${flowId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API ${res.status}: ${err}`);
+    }
+    return res.json();
   }
 };

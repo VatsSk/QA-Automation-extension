@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart QA Flow Recorder</title>
+  <link rel="stylesheet" href="flow.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="flow-app">
+    <!-- Header -->
+    <header class="flow-header">
+      <div class="header-main">
+        <div class="flow-title">
+          <span class="label">Flow :</span>
+          <input type="text" id="flow-name" class="flow-name-input" value="New Flow" placeholder="Flow Name..." />
+        </div>
+        <div class="recording-status recording" id="recording-status">
+          <span class="status-text">Recording</span>
+          <span class="status-dot">●</span>
+        </div>
+      </div>
+      <div class="header-sub">
+        <span class="step-count" id="step-count">0 Steps Recorded</span>
+        <div class="default-wait">
+          <span>Default Wait:</span>
+          <input type="number" id="default-wait-input" value="5" min="0" max="60" />
+          <span>sec</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Verification Mode Banner -->
+    <div class="verification-banner hidden" id="verification-banner">
+      <div class="banner-icon">🔍</div>
+      <div class="banner-text">
+        <strong>Verification Mode Active</strong>
+        <span>Click elements to verify. Press <kbd>Ctrl + V</kbd> or <kbd>Esc</kbd> to exit.</span>
+      </div>
+    </div>
+    <!-- Hover Mode Banner -->
+    <div class="hover-banner hidden" id="hover-banner">
+      <div class="banner-icon">🖐</div>
+      <div class="banner-text">
+        <strong>Hover Capture Active</strong>
+        <span>Click an element to record a Hover step. Press <kbd>Esc</kbd> to exit.</span>
+      </div>
+    </div>
+
+    <!-- Timeline container -->
+    <main class="timeline-container" id="timeline-container">
+      <div class="timeline-line"></div>
+      <div class="timeline-steps" id="timeline-steps">
+        <!-- Steps will be injected here via JS -->
+      </div>
+      
+      <!-- Empty State -->
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">✨</div>
+        <h3>Ready to record</h3>
+        <p>Interact with the page. The extension will automatically understand your actions and build the flow.</p>
+      </div>
+    </main>
+
+    <!-- Bottom Toolbar -->
+    <footer class="flow-toolbar">
+      <div class="toolbar-group">
+        <button class="tool-btn icon-btn" id="btn-undo" title="Undo" disabled>↩</button>
+        <button class="tool-btn icon-btn" id="btn-redo" title="Redo" disabled>↪</button>
+        <button class="tool-btn icon-btn" id="btn-hover-capture" title="Capture Hover (Click Element)">🖐</button>
+      </div>
+      <div class="toolbar-group main-actions">
+        <button class="tool-btn btn-pause" id="btn-pause">Pause</button>
+        <button class="tool-btn btn-resume hidden" id="btn-resume">Resume</button>
+        <button class="tool-btn btn-finish" id="btn-finish">Finish</button>
+      </div>
+      <div class="toolbar-group">
+        <button class="tool-btn icon-btn text-danger" id="btn-cancel" title="Cancel Recording">✕</button>
+      </div>
+    </footer>
+  </div>
+  <script src="../api/api-client.js"></script>
+  <script src="flow.js" type="module"></script>
+</body>
+</html>

@@ -28,11 +28,13 @@ chrome.action.onClicked.addListener(async (tab) => {
   const savedTargetTabId = tab.id;
   isCreatingWindow = true;
 
-  // Create a new detached window — NOT a popup on the same page, so it stays open
-  const saved = await chrome.storage.local.get(['winW', 'winH']);
+  // Create a new detached window — NOT a popup, so it stays open
+  const saved = await chrome.storage.local.get(['winW', 'winH', 'mode']);
+  const currentMode = saved.mode || 'FLOW';
+  const htmlFile = currentMode === 'FLOW' ? 'popup/flow.html' : 'popup/popup.html';
   const win = await chrome.windows.create({
     url: chrome.runtime.getURL(
-      `popup/popup.html?tabId=${tab.id}&windowId=SELF`
+      `${htmlFile}?tabId=${tab.id}&windowId=SELF`
     ),
     type: 'popup',   // 'popup' opens a clean detached window without tabs
     width:  saved.winW || 720,
@@ -67,10 +69,10 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
   notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId });
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (tabId !== targetTabId) return;
-  if (changeInfo.status === 'complete') {
-    notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId });
+  if (changeInfo.status === 'complete' || changeInfo.url) {
+    notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId, url: tab.url, title: tab.title });
   }
 });
 
@@ -91,7 +93,10 @@ chrome.runtime.onMessageExternal.addListener(
           url: msg.url,
           csvPath: msg.csvPath,
           runId: msg.runId || null,
-          existingRun: msg.existingRun || null
+          existingRun: msg.existingRun || null,
+          flowId: msg.flowId || null,
+          existingFlow: msg.existingFlow || null,
+          mode: msg.flag || msg.mode || 'RUN', // flag from web-app, mode as fallback
         }).then(() => {
           notifyPopup({ type: 'RELOAD_SESSION' });
         });
@@ -108,6 +113,24 @@ chrome.runtime.onMessageExternal.addListener(
 // ── Message bus ──────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
+
+    case 'START_RECORDING':
+    case 'STOP_RECORDING':
+    case 'PAUSE_RECORDING':
+    case 'START_VERIFICATION':
+    case 'STOP_VERIFICATION':
+    case 'START_HOVER_CAPTURE':
+    case 'STOP_HOVER_CAPTURE': {
+      if (!targetTabId) {
+        sendResponse({ ok: false, error: 'No target tab' });
+        break;
+      }
+      ensureContentScript(targetTabId)
+        .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
+        .catch(() => {});
+      sendResponse({ ok: true });
+      return true;
+    }
 
     // Popup asks: who is the current target tab?
     case 'POPUP_INIT': {
@@ -162,6 +185,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       break;
     }
+
 
     // Content script requests focus back on the recorder window after capture
     case 'FOCUS_RECORDER': {
