@@ -81,7 +81,7 @@ async function loadSession() {
         type: 'navigate',
         selector: '',
         value: state.loginUrl,
-        advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: false }
+        advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
       });
     }
   }
@@ -258,7 +258,7 @@ function mapBackendStepToLocal(bStep) {
       overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
       retryCount: bStep.retryCount || 0,
       continueOnFailure: bStep.continueOnFailure || false,
-      captureScreenshot: bStep.captureScreenshot || false
+      captureScreenshot: bStep.captureScreenshot ?? true
     }
   };
 }
@@ -297,7 +297,7 @@ function addStepFromCapture(data) {
     type: type,
     selector: selector,
     value: data.value || '',
-    advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: false }
+    advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
   
   pushState();
@@ -323,7 +323,7 @@ function addVerificationStep(elData) {
     selector: selector,
     verificationType: verType,
     value: expectedValue,
-    advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: false }
+    advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
   
   pushState();
@@ -474,15 +474,16 @@ function createStepCard(step, index) {
   `;
   
   const body = card.querySelector('.step-body');
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   
   if (step.type === 'navigate') {
-    body.appendChild(createFieldRow('URL', `<input type="text" class="step-input value-update" data-field="value" value="${step.value}">`));
+    body.appendChild(createFieldRow('URL', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
   } else {
-    body.appendChild(createFieldRow('Selector', `<input type="text" class="step-input value-update" data-field="selector" value="${step.selector}">`));
+    body.appendChild(createFieldRow('Selector', `<input type="text" class="step-input value-update" data-field="selector" value="${esc(step.selector)}">`));
   }
   
   if (step.type === 'type' || step.type === 'select') {
-    body.appendChild(createFieldRow('Value', `<input type="text" class="step-input value-update" data-field="value" value="${step.value}">`));
+    body.appendChild(createFieldRow('Value', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
   } else if (step.type === 'checkbox') {
     body.appendChild(createFieldRow('State', `
       <select class="step-input value-update" data-field="value">
@@ -499,12 +500,12 @@ function createStepCard(step, index) {
     `));
     // If text equals or similar, we might need a value field
     if (['Image Source', 'Alt Text', 'Value', 'Text Equals', 'Selected Value'].includes(step.verificationType)) {
-      body.appendChild(createFieldRow('Expected', `<input type="text" class="step-input value-update" data-field="value" value="${step.value}" placeholder="Expected value...">`));
+      body.appendChild(createFieldRow('Expected', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}" placeholder="Expected value...">`));
     }
   } else if (step.type === 'upload') {
-    body.appendChild(createFieldRow('File', `<input type="text" class="step-input value-update" data-field="value" value="${step.value}">`));
+    body.appendChild(createFieldRow('File', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
   } else if (step.type === 'date') {
-    body.appendChild(createFieldRow('Value', `<input type="date" class="step-input value-update" data-field="value" value="${step.value}">`));
+    body.appendChild(createFieldRow('Value', `<input type="date" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
   }
 
   bindCardEvents(card, step, index);
