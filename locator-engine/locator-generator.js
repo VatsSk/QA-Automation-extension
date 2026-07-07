@@ -71,12 +71,47 @@
       const xpath = buildXPath(el);
       candidates.push({ type: 'XPath', value: xpath, score: 50, note: 'Full XPath — brittle but precise' });
 
-      // 9. Text content (buttons / links / select2)
+      // 9. Select2 Specific Rules
+      const isSelect2 = (typeof el.className === 'string' && el.className.includes('select2')) || 
+                        (el.id && el.id.includes('select2-')) || 
+                        (el.closest && el.closest('.select2-container') !== null);
+
+      if (isSelect2) {
+        const tag = el.tagName.toLowerCase();
+        
+        const container = (el.id && el.id.endsWith('-container') && el.id.startsWith('select2-')) 
+            ? el 
+            : (el.closest ? el.closest('[id^="select2-"][id$="-container"]') : null);
+            
+        if (container && container.id) {
+           candidates.push({ type: 'Select2 ID', value: `//${container.tagName.toLowerCase()}[@id="${container.id}"]`, score: 100, note: 'Select2 container ID' });
+           const match = container.id.match(/^select2-(.+)-container$/);
+           if (match && match[1] && document.getElementById(match[1])) {
+              candidates.push({ type: 'Select2 Anchor', value: `//select[@id="${match[1]}"]/following-sibling::span//span[contains(@class,"select2-selection__rendered")]`, score: 90, note: 'Anchored to original select' });
+           }
+        }
+        
+        if (typeof el.className === 'string') {
+          const select2Text = (el.textContent || '').trim();
+          if (el.className.includes('select2-selection__placeholder') && select2Text) {
+             candidates.push({ type: 'Select2 Class', value: `//${tag}[contains(@class,"select2-selection__placeholder") and normalize-space(.)="${select2Text}"]`, score: 95, note: 'Select2 placeholder' });
+          } else if (el.className.includes('select2-selection__rendered')) {
+             candidates.push({ type: 'Select2 Class', value: `//${tag}[contains(@class,"select2-selection__rendered")]`, score: 95, note: 'Select2 rendered element' });
+          } else if (el.className.includes('select2-results__option') && select2Text) {
+             candidates.push({ type: 'Select2 Option', value: `//${tag}[contains(@class,"select2-results__option") and normalize-space(.)="${select2Text}"]`, score: 95, note: 'Select2 dropdown option' });
+          }
+        }
+        
+        if (el.getAttribute('role') === 'combobox') {
+           candidates.push({ type: 'Select2 ARIA', value: `//${tag}[@role="combobox"]`, score: 75, note: 'Select2 combobox role' });
+        }
+      }
+
+      // 10. Text content (buttons / links)
       const text = (el.textContent || '').trim();
-      const isSelect2 = (typeof el.className === 'string' && el.className.includes('select2')) || (el.id && el.id.includes('select2'));
-      if (text && text.length < 60 && (isSelect2 || ['BUTTON', 'A', 'LABEL', 'SPAN', 'LI'].includes(el.tagName))) {
+      if (text && text.length < 60 && ['BUTTON', 'A', 'LABEL', 'SPAN', 'LI'].includes(el.tagName)) {
         const byText = `//${el.tagName.toLowerCase()}[normalize-space(.)="${text}"]`;
-        candidates.push({ type: 'text', value: byText, score: isSelect2 ? 90 : 55, note: `By visible text: "${text}"` });
+        candidates.push({ type: 'text', value: byText, score: isSelect2 ? 50 : 55, note: `By visible text: "${text}"` });
       }
 
       // Sort descending by score
