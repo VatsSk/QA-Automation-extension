@@ -12,7 +12,7 @@
       const candidates = [];
 
       // 1. ID
-      if (el.id) {
+      if (el.id && !el.id.includes('select2-')) {
         const sel = `#${CSS.escape(el.id)}`;
         candidates.push({ type: 'ID', value: sel, score: 100, note: 'Unique ID — most stable' });
       }
@@ -71,11 +71,12 @@
       const xpath = buildXPath(el);
       candidates.push({ type: 'XPath', value: xpath, score: 50, note: 'Full XPath — brittle but precise' });
 
-      // 9. Text content (buttons / links)
+      // 9. Text content (buttons / links / select2)
       const text = (el.textContent || '').trim();
-      if (text && text.length < 60 && ['BUTTON', 'A', 'LABEL', 'SPAN'].includes(el.tagName)) {
+      const isSelect2 = (typeof el.className === 'string' && el.className.includes('select2')) || (el.id && el.id.includes('select2'));
+      if (text && text.length < 60 && (isSelect2 || ['BUTTON', 'A', 'LABEL', 'SPAN', 'LI'].includes(el.tagName))) {
         const byText = `//${el.tagName.toLowerCase()}[normalize-space(.)="${text}"]`;
-        candidates.push({ type: 'text', value: byText, score: 55, note: `By visible text: "${text}"` });
+        candidates.push({ type: 'text', value: byText, score: isSelect2 ? 90 : 55, note: `By visible text: "${text}"` });
       }
 
       // Sort descending by score
@@ -132,7 +133,7 @@
     while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.body) {
       let selector = node.tagName.toLowerCase();
 
-      if (node.id) {
+      if (node.id && !node.id.includes('select2-')) {
         selector = `#${CSS.escape(node.id)}`;
         parts.unshift(selector);
         break; // ID is enough
@@ -168,7 +169,7 @@
     while (node && node.nodeType === Node.ELEMENT_NODE) {
       const tag = node.tagName.toLowerCase();
 
-      if (node.id) {
+      if (node.id && !node.id.includes('select2-')) {
         parts.unshift(`//${tag}[@id="${node.id}"]`);
         break;
       }

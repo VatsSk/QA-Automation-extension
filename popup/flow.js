@@ -290,7 +290,7 @@ function getSuggestedVerification(elData) {
 
 function addStepFromCapture(data) {
   const type = mapActionToStepType(data);
-  const selector = data.target.customLocator || (data.target.id ? `#${data.target.id}` : data.target.cssSelector) || 'Unknown Element';
+  const selector = data.target.cssSelector || 'Unknown Element';
   
   const step = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -307,7 +307,7 @@ function addStepFromCapture(data) {
 }
 
 function addVerificationStep(elData) {
-  const selector = elData.customLocator || (elData.id ? `#${elData.id}` : elData.cssSelector) || 'Unknown Element';
+  const selector = elData.cssSelector || 'Unknown Element';
   const verType = getSuggestedVerification(elData);
   // Use text for Text Equals, value for Value/Selected Value, empty for Visible/Exists
   let expectedValue = '';
