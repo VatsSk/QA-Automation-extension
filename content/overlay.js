@@ -225,6 +225,11 @@
     const type = (el.getAttribute('type') || '').toLowerCase();
 
     if (tag === 'input') {
+
+        // 🚨 CRITICAL FIX: handle non-editable first
+      if (el.readOnly || el.disabled) {
+        return { action: 'click', value: '' };
+      }
       if (['text', 'password', 'email', 'number', 'search', 'url', 'tel', ''].includes(type)) {
         return { action: 'type', value: el.value || '' };
       }
