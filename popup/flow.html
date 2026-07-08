@@ -79,6 +79,21 @@
         <button class="tool-btn icon-btn text-danger" id="btn-cancel" title="Cancel Recording">✕</button>
       </div>
     </footer>
+    
+    <!-- Custom Modal for confirmations -->
+    <div id="custom-modal" class="custom-modal hidden">
+      <div class="custom-modal-content">
+        <h3 id="custom-modal-title">Confirm</h3>
+        <p id="custom-modal-message">Are you sure?</p>
+        <div class="custom-modal-actions">
+          <button id="custom-modal-cancel" class="tool-btn">Keep Recording</button>
+          <button id="custom-modal-confirm" class="tool-btn text-danger" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3);">Yes, Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Container for alerts -->
+    <div id="toast-container" class="toast-container"></div>
   </div>
   <script src="../api/api-client.js"></script>
   <script src="flow.js" type="module"></script>

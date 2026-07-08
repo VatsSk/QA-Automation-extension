@@ -227,6 +227,39 @@ function stopRecording() {
   render();
 }
 
+// ── UI Utils (Toasts & Modals) ────────────────────────────────────────────────
+function showToast(message) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}
+
+function showModal(title, message, onConfirm) {
+  const modal = document.getElementById('custom-modal');
+  document.getElementById('custom-modal-title').textContent = title;
+  document.getElementById('custom-modal-message').textContent = message;
+  
+  const confirmBtn = document.getElementById('custom-modal-confirm');
+  const cancelBtn = document.getElementById('custom-modal-cancel');
+  
+  const cleanup = () => {
+    modal.classList.add('hidden');
+    confirmBtn.removeEventListener('click', handleConfirm);
+    cancelBtn.removeEventListener('click', handleCancel);
+  };
+  
+  const handleConfirm = () => { cleanup(); onConfirm(); };
+  const handleCancel = () => { cleanup(); };
+  
+  confirmBtn.addEventListener('click', handleConfirm);
+  cancelBtn.addEventListener('click', handleCancel);
+  
+  modal.classList.remove('hidden');
+}
+
 // ── Local draft persistence (chrome.storage.local, no API calls) ───────────────
 function setAutosaveStatus(cls, message) {
   const el = els.autosaveStatus;
@@ -750,21 +783,21 @@ function bindGlobalEvents() {
       clearLocalDraft();  // wipe local draft after successful API save
       window.close();
     } catch (err) {
-      alert('Failed to save flow: ' + err.message);
+      showToast('Failed to save flow: ' + err.message);
       els.btnFinish.disabled = false;
       els.btnFinish.textContent = 'Finish';
     }
   });
   
   els.btnCancel.addEventListener('click', () => {
-    if (confirm('Are you sure you want to cancel and clear all steps?')) {
+    showModal('Cancel Recording', 'Are you sure you want to cancel and clear all steps?', () => {
       clearLocalDraft();  // wipe local draft on cancel too
       state.steps = [];
       undoStack = [];
       redoStack = [];
       stopRecording();
       window.close();
-    }
+    });
   });
 
   els.btnHoverCapture.addEventListener('click', toggleHoverCaptureMode);

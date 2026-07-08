@@ -134,6 +134,8 @@ chrome.runtime.onMessageExternal.addListener(
           existingFlow: msg.existingFlow || null,
           mode: msg.flag || msg.mode || 'RUN', // flag from web-app, mode as fallback
         }).then(() => {
+          return chrome.storage.local.remove(['flow_draft']); // Clear local draft on fresh server launch
+        }).then(() => {
           notifyPopup({ type: 'RELOAD_SESSION' });
         });
 

@@ -1,9 +1,36 @@
 // ─── locator-generator.js ────────────────────────────────────────────────────
-// Generates ranked CSS / XPath locators for any DOM element.
-// Also extracts human-readable value from an element.
+// Generates stable, automation-friendly CSS / XPath locators for any DOM element.
+// Avoids dynamic IDs, DOM positions, and framework-generated classes.
 
 (function () {
   'use strict';
+
+  // ── Dynamic ID Detection Patterns ──────────────────────────────────────────
+  const DYNAMIC_ID_PATTERNS = [
+    /^[a-fA-F0-9]{24}$/,           // Mongo ObjectId
+    /^[0-9a-fA-F-]{32,}$/,         // UUID
+    /^[a-fA-F0-9]{16,}$/,          // Long hex strings
+    /^[0-9]{6,}$/,                 // Mostly numeric
+    /^[A-Za-z0-9_-]{16,}$/,        // Long random alphanumeric
+    /^(select2-|css-|jss|react-|ember|MuiPaper|chakra|ant-)/ // Framework prefixes
+  ];
+
+  // ── Framework/Dynamic Class Patterns ───────────────────────────────────────
+  const UNSTABLE_CLASS_PATTERNS = [
+    /^(active|selected|focus|hover|disabled|open|visible|show|hide|checked|collapsed|expanded)$/i,
+    /^ng-/,
+    /^css-[a-zA-Z0-9]+$/,
+    /^Mui/,
+    /^chakra-/,
+    /^ant-/,
+    /^mat-/,
+    /^v-/,
+    /^react-/,
+    /^ember/,
+    /^jss\d+/,
+    /^_[a-zA-Z0-9]{5,}$/, // Hash-like classes
+    /^\d+$/                // Pure numeric classes
+  ];
 
   window.LocatorGenerator = {
 
@@ -11,108 +38,33 @@
     generate(el) {
       const candidates = [];
 
-      // 1. ID
-      if (el.id && !el.id.includes('select2-')) {
-        const sel = `#${CSS.escape(el.id)}`;
-        candidates.push({ type: 'ID', value: sel, score: 100, note: 'Unique ID — most stable' });
+      // Step 1: Check for stable attributes on the element itself
+      this._generateStableLocators(el, candidates);
+
+      // Step 2: Only if no unique stable locator found, try parent context
+      const hasUniqueStable = candidates.some(c => c.score >= 80 && this._isUnique(c.value, c.type));
+      if (!hasUniqueStable) {
+        this._generateContextualLocators(el, candidates);
       }
 
-      // 2. data-testid / data-cy / data-qa
-      const testAttrs = ['data-testid', 'data-cy', 'data-qa', 'data-test'];
-      for (const attr of testAttrs) {
-        const val = el.getAttribute(attr);
-        if (val) {
-          const sel = `[${attr}="${val}"]`;
-          candidates.push({ type: attr, value: sel, score: 95, note: 'Test attribute — very stable' });
+      // Step 3: Fallback to text-based locators (only for interactive elements)
+      if (candidates.length === 0 || !hasUniqueStable) {
+        this._generateTextBasedLocators(el, candidates);
+      }
+
+      // Step 4: Last resort - smart CSS/XPath (avoid position-based)
+      if (candidates.length === 0) {
+        this._generateFallbackLocators(el, candidates);
+      }
+
+      // Verify uniqueness and adjust scores
+      candidates.forEach(candidate => {
+        const isUnique = this._isUnique(candidate.value, candidate.type);
+        if (!isUnique && candidate.score > 50) {
+          candidate.score = Math.min(candidate.score, 45);
+          candidate.note += ' (⚠ not unique)';
         }
-      }
-
-      // 3. name attribute (forms)
-      if (el.name) {
-        const sel = `${el.tagName.toLowerCase()}[name="${el.name}"]`;
-        candidates.push({ type: 'name', value: sel, score: 80, note: 'Form name attribute' });
-      }
-
-      // 4. aria-label
-      const ariaLabel = el.getAttribute('aria-label');
-      if (ariaLabel) {
-        const sel = `[aria-label="${ariaLabel}"]`;
-        candidates.push({ type: 'aria-label', value: sel, score: 75, note: 'ARIA label — accessible' });
-      }
-
-      // 5. aria-labelledby → resolved text
-      const labelledBy = el.getAttribute('aria-labelledby');
-      if (labelledBy) {
-        const labEl = document.getElementById(labelledBy);
-        if (labEl) {
-          const text = labEl.textContent.trim();
-          candidates.push({ type: 'aria-labelledby', value: `[aria-labelledby="${labelledBy}"]`, score: 70, note: `Labels: "${text}"` });
-        }
-      }
-
-      // 6. role
-      const role = el.getAttribute('role');
-      if (role) {
-        const roleSel = `[role="${role}"]`;
-        const unique = document.querySelectorAll(roleSel).length === 1;
-        if (unique) {
-          candidates.push({ type: 'role', value: roleSel, score: 65, note: 'Unique ARIA role' });
-        }
-      }
-
-      // 7. Smart CSS path
-      const cssPath = buildCssPath(el);
-      if (cssPath) {
-        const unique = document.querySelectorAll(cssPath).length === 1;
-        candidates.push({ type: 'CSS', value: cssPath, score: unique ? 60 : 40, note: unique ? 'Unique CSS path' : 'CSS path (may match multiple)' });
-      }
-
-      // 8. XPath
-      const xpath = buildXPath(el);
-      candidates.push({ type: 'XPath', value: xpath, score: 50, note: 'Full XPath — brittle but precise' });
-
-      // 9. Select2 Specific Rules
-      const isSelect2 = (typeof el.className === 'string' && el.className.includes('select2')) || 
-                        (el.id && el.id.includes('select2-')) || 
-                        (el.closest && el.closest('.select2-container') !== null);
-
-      if (isSelect2) {
-        const tag = el.tagName.toLowerCase();
-        
-        const container = (el.id && el.id.endsWith('-container') && el.id.startsWith('select2-')) 
-            ? el 
-            : (el.closest ? el.closest('[id^="select2-"][id$="-container"]') : null);
-            
-        if (container && container.id) {
-           candidates.push({ type: 'Select2 ID', value: `//${container.tagName.toLowerCase()}[@id="${container.id}"]`, score: 100, note: 'Select2 container ID' });
-           const match = container.id.match(/^select2-(.+)-container$/);
-           if (match && match[1] && document.getElementById(match[1])) {
-              candidates.push({ type: 'Select2 Anchor', value: `//select[@id="${match[1]}"]/following-sibling::span//span[contains(@class,"select2-selection__rendered")]`, score: 90, note: 'Anchored to original select' });
-           }
-        }
-        
-        if (typeof el.className === 'string') {
-          const select2Text = (el.textContent || '').trim();
-          if (el.className.includes('select2-selection__placeholder') && select2Text) {
-             candidates.push({ type: 'Select2 Class', value: `//${tag}[contains(@class,"select2-selection__placeholder") and normalize-space(.)="${select2Text}"]`, score: 95, note: 'Select2 placeholder' });
-          } else if (el.className.includes('select2-selection__rendered')) {
-             candidates.push({ type: 'Select2 Class', value: `//${tag}[contains(@class,"select2-selection__rendered")]`, score: 95, note: 'Select2 rendered element' });
-          } else if (el.className.includes('select2-results__option') && select2Text) {
-             candidates.push({ type: 'Select2 Option', value: `//${tag}[contains(@class,"select2-results__option") and normalize-space(.)="${select2Text}"]`, score: 95, note: 'Select2 dropdown option' });
-          }
-        }
-        
-        if (el.getAttribute('role') === 'combobox') {
-           candidates.push({ type: 'Select2 ARIA', value: `//${tag}[@role="combobox"]`, score: 75, note: 'Select2 combobox role' });
-        }
-      }
-
-      // 10. Text content (buttons / links)
-      const text = (el.textContent || '').trim();
-      if (text && text.length < 60 && ['BUTTON', 'A', 'LABEL', 'SPAN', 'LI'].includes(el.tagName)) {
-        const byText = `//${el.tagName.toLowerCase()}[normalize-space(.)="${text}"]`;
-        candidates.push({ type: 'text', value: byText, score: isSelect2 ? 50 : 55, note: `By visible text: "${text}"` });
-      }
+      });
 
       // Sort descending by score
       candidates.sort((a, b) => b.score - a.score);
@@ -122,6 +74,361 @@
         confidence: candidates[0]?.score ?? 0,
         locators: candidates
       };
+    },
+
+    // ── Generate stable attribute-based locators ──────────────────────────────
+    _generateStableLocators(el, candidates) {
+      // Priority 1: data-testid
+      const testid = el.getAttribute('data-testid');
+      if (testid) {
+        candidates.push({ 
+          type: 'data-testid', 
+          value: `[data-testid="${this._escapeAttr(testid)}"]`, 
+          score: 100, 
+          note: 'data-testid — most stable' 
+        });
+      }
+
+      // Priority 2: data-test
+      const dataTest = el.getAttribute('data-test');
+      if (dataTest) {
+        candidates.push({ 
+          type: 'data-test', 
+          value: `[data-test="${this._escapeAttr(dataTest)}"]`, 
+          score: 98, 
+          note: 'data-test — very stable' 
+        });
+      }
+
+      // Priority 3: data-cy
+      const dataCy = el.getAttribute('data-cy');
+      if (dataCy) {
+        candidates.push({ 
+          type: 'data-cy', 
+          value: `[data-cy="${this._escapeAttr(dataCy)}"]`, 
+          score: 98, 
+          note: 'data-cy (Cypress) — very stable' 
+        });
+      }
+
+      // Priority 4: data-qa
+      const dataQa = el.getAttribute('data-qa');
+      if (dataQa) {
+        candidates.push({ 
+          type: 'data-qa', 
+          value: `[data-qa="${this._escapeAttr(dataQa)}"]`, 
+          score: 98, 
+          note: 'data-qa — very stable' 
+        });
+      }
+
+      // Priority 5: name (for form elements)
+      const name = el.getAttribute('name');
+      if (name) {
+        const tag = el.tagName.toLowerCase();
+        candidates.push({ 
+          type: 'name', 
+          value: `${tag}[name="${this._escapeAttr(name)}"]`, 
+          score: 90, 
+          note: 'name attribute — stable for forms' 
+        });
+        // XPath alternative
+        candidates.push({ 
+          type: 'name-xpath', 
+          value: `//${tag}[@name="${this._escapeAttr(name)}"]`, 
+          score: 88, 
+          note: 'name attribute (XPath)' 
+        });
+      }
+
+      // Priority 6: aria-label
+      const ariaLabel = el.getAttribute('aria-label');
+      if (ariaLabel) {
+        candidates.push({ 
+          type: 'aria-label', 
+          value: `[aria-label="${this._escapeAttr(ariaLabel)}"]`, 
+          score: 85, 
+          note: 'aria-label — accessible & stable' 
+        });
+      }
+
+      // Priority 7: role (only if unique)
+      const role = el.getAttribute('role');
+      if (role) {
+        const roleSel = `[role="${this._escapeAttr(role)}"]`;
+        candidates.push({ 
+          type: 'role', 
+          value: roleSel, 
+          score: 80, 
+          note: 'ARIA role' 
+        });
+      }
+
+      // Priority 8: Stable ID (non-dynamic)
+      if (el.id && !this._isDynamicId(el.id)) {
+        const sel = `#${CSS.escape(el.id)}`;
+        candidates.push({ 
+          type: 'ID', 
+          value: sel, 
+          score: 95, 
+          note: 'Stable ID' 
+        });
+      }
+
+      // Priority 9: Semantic classes
+      const semanticClasses = this._getSemanticClasses(el);
+      if (semanticClasses.length > 0) {
+        const tag = el.tagName.toLowerCase();
+        const classSelector = semanticClasses.map(c => `.${CSS.escape(c)}`).join('');
+        candidates.push({ 
+          type: 'semantic-class', 
+          value: `${tag}${classSelector}`, 
+          score: 75, 
+          note: `Semantic class: ${semanticClasses.join('.')}` 
+        });
+      }
+
+      // Priority 10: Custom data-* attributes (stable)
+      Array.from(el.attributes).forEach(attr => {
+        if (attr.name.startsWith('data-') && 
+            !['data-testid', 'data-test', 'data-cy', 'data-qa'].includes(attr.name) &&
+            !this._isDynamicValue(attr.value)) {
+          candidates.push({ 
+            type: attr.name, 
+            value: `[${attr.name}="${this._escapeAttr(attr.value)}"]`, 
+            score: 70, 
+            note: `Custom ${attr.name} attribute` 
+          });
+        }
+      });
+
+      // Priority 11: href (for links)
+      const href = el.getAttribute('href');
+      if (href && !this._isDynamicValue(href)) {
+        candidates.push({ 
+          type: 'href', 
+          value: `a[href="${this._escapeAttr(href)}"]`, 
+          score: 70, 
+          note: 'Stable href' 
+        });
+      }
+
+      // Priority 12: title
+      const title = el.getAttribute('title');
+      if (title) {
+        candidates.push({ 
+          type: 'title', 
+          value: `[title="${this._escapeAttr(title)}"]`, 
+          score: 65, 
+          note: 'title attribute' 
+        });
+      }
+
+      // Priority 13: placeholder (for inputs)
+      const placeholder = el.getAttribute('placeholder');
+      if (placeholder) {
+        const tag = el.tagName.toLowerCase();
+        candidates.push({ 
+          type: 'placeholder', 
+          value: `${tag}[placeholder="${this._escapeAttr(placeholder)}"]`, 
+          score: 65, 
+          note: 'placeholder attribute' 
+        });
+      }
+    },
+
+    // ── Generate contextual locators (with parent) ────────────────────────────
+    _generateContextualLocators(el, candidates) {
+      // Combine semantic class with stable attribute
+      const semanticClasses = this._getSemanticClasses(el);
+      if (semanticClasses.length > 0) {
+        const tag = el.tagName.toLowerCase();
+        const classSelector = semanticClasses.map(c => `.${CSS.escape(c)}`).join('');
+        
+        // Try combining with data attributes
+        const dataTarget = el.getAttribute('data-target');
+        if (dataTarget) {
+          candidates.push({ 
+            type: 'class+data', 
+            value: `${tag}${classSelector}[data-target="${this._escapeAttr(dataTarget)}"]`, 
+            score: 85, 
+            note: 'Semantic class + data-target' 
+          });
+        }
+
+        const href = el.getAttribute('href');
+        if (href && !this._isDynamicValue(href)) {
+          candidates.push({ 
+            type: 'class+href', 
+            value: `${tag}${classSelector}[href="${this._escapeAttr(href)}"]`, 
+            score: 82, 
+            note: 'Semantic class + href' 
+          });
+        }
+      }
+
+      // Check parent for stable context
+      const parent = el.parentElement;
+      if (parent && parent !== document.body) {
+        const parentId = parent.id;
+        if (parentId && !this._isDynamicId(parentId)) {
+          const tag = el.tagName.toLowerCase();
+          const childClasses = semanticClasses.length > 0 
+            ? semanticClasses.map(c => `.${CSS.escape(c)}`).join('') 
+            : '';
+          candidates.push({ 
+            type: 'parent-id', 
+            value: `#${CSS.escape(parentId)} > ${tag}${childClasses}`, 
+            score: 78, 
+            note: 'Parent ID + child selector' 
+          });
+        }
+      }
+    },
+
+    // ── Generate text-based locators ──────────────────────────────────────────
+    _generateTextBasedLocators(el, candidates) {
+      const text = (el.textContent || '').trim();
+      const tag = el.tagName.toLowerCase();
+      
+      // Only for interactive elements with reasonable text length
+      if (text && text.length > 0 && text.length < 80 && 
+          ['button', 'a', 'label', 'span', 'li', 'td', 'th', 'div'].includes(tag)) {
+        
+        // Exact text match
+        candidates.push({ 
+          type: 'text-xpath', 
+          value: `//${tag}[normalize-space(.)="${this._escapeXPath(text)}"]`, 
+          score: 60, 
+          note: `By exact text: "${text.slice(0, 40)}${text.length > 40 ? '...' : ''}"` 
+        });
+
+        // Partial text match (contains)
+        if (text.length > 10) {
+          candidates.push({ 
+            type: 'text-contains', 
+            value: `//${tag}[contains(normalize-space(.), "${this._escapeXPath(text)}")]`, 
+            score: 55, 
+            note: `Contains text: "${text.slice(0, 40)}${text.length > 40 ? '...' : ''}"` 
+          });
+        }
+      }
+    },
+
+    // ── Generate fallback locators (avoid position) ───────────────────────────
+    _generateFallbackLocators(el, candidates) {
+      // Smart CSS path without nth-child
+      const cssPath = this._buildSmartCssPath(el);
+      if (cssPath) {
+        candidates.push({ 
+          type: 'CSS', 
+          value: cssPath, 
+          score: 50, 
+          note: 'CSS path (no positions)' 
+        });
+      }
+
+      // Smart XPath without positions
+      const xpathSmart = this._buildSmartXPath(el);
+      if (xpathSmart) {
+        candidates.push({ 
+          type: 'XPath', 
+          value: xpathSmart, 
+          score: 45, 
+          note: 'XPath (no positions)' 
+        });
+      }
+    },
+
+    // ── Check if ID is dynamic ────────────────────────────────────────────────
+    _isDynamicId(id) {
+      return DYNAMIC_ID_PATTERNS.some(pattern => pattern.test(id));
+    },
+
+    // ── Check if value appears dynamic ────────────────────────────────────────
+    _isDynamicValue(value) {
+      return DYNAMIC_ID_PATTERNS.some(pattern => pattern.test(value));
+    },
+
+    // ── Get semantic (non-framework) classes ──────────────────────────────────
+    _getSemanticClasses(el) {
+      return Array.from(el.classList).filter(className => {
+        return !UNSTABLE_CLASS_PATTERNS.some(pattern => pattern.test(className));
+      });
+    },
+
+    // ── Check if locator is unique ────────────────────────────────────────────
+    _isUnique(locator, type) {
+      try {
+        if (type.includes('xpath') || locator.startsWith('//')) {
+          const result = document.evaluate(
+            locator, 
+            document, 
+            null, 
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, 
+            null
+          );
+          return result.snapshotLength === 1;
+        } else {
+          const matches = document.querySelectorAll(locator);
+          return matches.length === 1;
+        }
+      } catch (e) {
+        return false;
+      }
+    },
+
+    // ── Build CSS path without position selectors ─────────────────────────────
+    _buildSmartCssPath(el) {
+      const tag = el.tagName.toLowerCase();
+      const semanticClasses = this._getSemanticClasses(el);
+      
+      if (semanticClasses.length > 0) {
+        return `${tag}${semanticClasses.map(c => `.${CSS.escape(c)}`).join('')}`;
+      }
+
+      // Try with parent context
+      const parent = el.parentElement;
+      if (parent && parent !== document.body) {
+        const parentClasses = this._getSemanticClasses(parent);
+        const parentTag = parent.tagName.toLowerCase();
+        if (parentClasses.length > 0) {
+          const childClasses = semanticClasses.length > 0 
+            ? semanticClasses.map(c => `.${CSS.escape(c)}`).join('') 
+            : '';
+          return `${parentTag}${parentClasses.map(c => `.${CSS.escape(c)}`).join('')} > ${tag}${childClasses}`;
+        }
+      }
+
+      return `${tag}`;
+    },
+
+    // ── Build XPath without position predicates ───────────────────────────────
+    _buildSmartXPath(el) {
+      const tag = el.tagName.toLowerCase();
+      const semanticClasses = this._getSemanticClasses(el);
+      
+      if (semanticClasses.length > 0) {
+        const classConditions = semanticClasses
+          .map(c => `contains(@class, "${this._escapeXPath(c)}")`)
+          .join(' and ');
+        return `//${tag}[${classConditions}]`;
+      }
+
+      return `//${tag}`;
+    },
+
+    // ── Escape attribute values for CSS ───────────────────────────────────────
+    _escapeAttr(value) {
+      return value.replace(/"/g, '\\"');
+    },
+
+    // ── Escape values for XPath ───────────────────────────────────────────────
+    _escapeXPath(value) {
+      if (!value.includes("'")) return value;
+      if (!value.includes('"')) return value;
+      // Handle strings with both quotes
+      return value.replace(/'/g, "\\'");
     },
 
     // Extract visible text shown to the user — used for verification value only
@@ -159,72 +466,5 @@
       };
     }
   };
-
-  // ── CSS path builder ───────────────────────────────────────────────────────
-  function buildCssPath(el) {
-    const parts = [];
-    let node = el;
-
-    while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.body) {
-      let selector = node.tagName.toLowerCase();
-
-      if (node.id && !node.id.includes('select2-')) {
-        selector = `#${CSS.escape(node.id)}`;
-        parts.unshift(selector);
-        break; // ID is enough
-      }
-
-      // Prefer stable class
-      const stableClass = Array.from(node.classList).find(c =>
-        !c.match(/^(active|selected|hover|focus|disabled|open|visible|show|hide|\d)/)
-      );
-      if (stableClass) selector += `.${CSS.escape(stableClass)}`;
-
-      // Add :nth-child only when needed for uniqueness
-      if (node.parentElement) {
-        const siblings = Array.from(node.parentElement.children).filter(s => s.tagName === node.tagName);
-        if (siblings.length > 1) {
-          const idx = siblings.indexOf(node) + 1;
-          selector += `:nth-of-type(${idx})`;
-        }
-      }
-
-      parts.unshift(selector);
-      node = node.parentElement;
-    }
-
-    return parts.join(' > ');
-  }
-
-  // ── XPath builder ─────────────────────────────────────────────────────────
-  function buildXPath(el) {
-    const parts = [];
-    let node = el;
-
-    while (node && node.nodeType === Node.ELEMENT_NODE) {
-      const tag = node.tagName.toLowerCase();
-
-      if (node.id && !node.id.includes('select2-')) {
-        parts.unshift(`//${tag}[@id="${node.id}"]`);
-        break;
-      }
-
-      let part = tag;
-      if (node.parentElement) {
-        const siblings = Array.from(node.parentElement.children).filter(s => s.tagName === node.tagName);
-        if (siblings.length > 1) {
-          const idx = siblings.indexOf(node) + 1;
-          part += `[${idx}]`;
-        }
-      }
-
-      parts.unshift(part);
-      node = node.parentElement;
-    }
-
-    // If we broke out at an ID, the first entry already has //tag[@id=...]
-    if (parts[0]?.startsWith('//')) return parts.join('/');
-    return '//' + parts.join('/');
-  }
 
 })();
