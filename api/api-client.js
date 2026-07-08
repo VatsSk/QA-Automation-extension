@@ -89,6 +89,7 @@ const ApiClient = {
   },
 
   async updateFlowDraft({ flowId, authToken, payload }) {
+    payload.id = flowId; // Ensure the payload has the flow ID
     if (!flowId) {
       throw new Error('Cannot update flow: Flow ID is missing.');
     }

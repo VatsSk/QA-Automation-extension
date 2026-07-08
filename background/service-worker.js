@@ -7,20 +7,54 @@ let targetTabId = null;         // The tab the user is recording against
 let popupTabId = null;          // The tab inside the recorder window
 let isCreatingWindow = false;   // Guard against onActivated race during window creation
 
+// ── Persist / restore window IDs across service-worker restarts ──────────────
+// MV3 service workers are ephemeral — Chrome can terminate them at any time.
+// We persist recorderWindowId & popupTabId in chrome.storage.session so that
+// a restarted service worker can re-adopt an already-open recorder window
+// instead of creating a duplicate.
+async function persistWindowState() {
+  await chrome.storage.session.set({ recorderWindowId, popupTabId });
+}
+
+async function restoreWindowState() {
+  const s = await chrome.storage.session.get(['recorderWindowId', 'popupTabId']);
+  if (s.recorderWindowId) recorderWindowId = s.recorderWindowId;
+  if (s.popupTabId) popupTabId = s.popupTabId;
+}
+
+async function clearWindowState() {
+  recorderWindowId = null;
+  popupTabId = null;
+  await chrome.storage.session.remove(['recorderWindowId', 'popupTabId']);
+}
+
+// ── Verify that the in-memory / restored window is still alive ───────────────
+async function isRecorderWindowAlive() {
+  if (recorderWindowId === null) return false;
+  try {
+    await chrome.windows.get(recorderWindowId);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 // ── Open / focus the recorder window when the toolbar icon is clicked ────────
 chrome.action.onClicked.addListener(async (tab) => {
   if (isCreatingWindow) return;
   targetTabId = tab.id;
 
-  if (recorderWindowId !== null) {
-    // If it already exists, just focus it
+  // Restore persisted state in case the service worker was restarted
+  await restoreWindowState();
+
+  if (await isRecorderWindowAlive()) {
+    // Window is already open — just focus it and notify about the new tab
     try {
       await chrome.windows.update(recorderWindowId, { focused: true });
-      // Let the popup know which tab we're on now
       notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId: targetTabId });
       return;
     } catch (_) {
-      recorderWindowId = null; // window was closed externally
+      await clearWindowState();
     }
   }
 
@@ -49,13 +83,15 @@ chrome.action.onClicked.addListener(async (tab) => {
   // Restore targetTabId — onActivated may have overwritten it during await
   targetTabId = savedTargetTabId;
   isCreatingWindow = false;
+
+  // Persist so future SW wake-ups can re-adopt this window
+  await persistWindowState();
 });
 
 // ── Track when our recorder window is closed ─────────────────────────────────
 chrome.windows.onRemoved.addListener((windowId) => {
   if (windowId === recorderWindowId) {
-    recorderWindowId = null;
-    popupTabId = null;
+    clearWindowState();
   }
 });
 

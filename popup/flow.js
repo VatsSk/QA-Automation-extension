@@ -20,6 +20,7 @@ let state = {
 
 let undoStack = [];
 let redoStack = [];
+let _captureInsertIndex = null; // null = append mode, number = insert-at-index mode
 
 // ── DOM Elements ──────────────────────────────────────────────────────────────
 const els = {
@@ -37,7 +38,8 @@ const els = {
   btnFinish: document.getElementById('btn-finish'),
   btnCancel: document.getElementById('btn-cancel'),
   btnHoverCapture: document.getElementById('btn-hover-capture'),
-  hoverBanner: document.getElementById('hover-banner')
+  hoverBanner: document.getElementById('hover-banner'),
+  autosaveStatus: document.getElementById('autosave-status')
 };
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -59,13 +61,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadSession() {
-  const data = await chrome.storage.local.get(['projectId', 'moduleId', 'flowId', 'existingFlow', 'createdBy', 'url', 'authToken']);
+  const data = await chrome.storage.local.get(['projectId', 'moduleId', 'flowId', 'existingFlow', 'createdBy', 'url', 'authToken', 'flow_draft']);
   state.projectId = data.projectId;
   state.moduleId = data.moduleId;
   state.flowId = data.flowId;
   state.createdBy = data.createdBy;
   state.loginUrl = data.url;
   state.authToken = data.authToken;
+
+  // If a local draft exists for this same project/module, restore it
+  const draft = data.flow_draft;
+  if (
+    draft &&
+    draft.projectId === data.projectId &&
+    draft.moduleId === data.moduleId
+  ) {
+    state.flowName = draft.flowName || 'New Flow';
+    state.defaultWait = draft.defaultWait ?? 5;
+    state.steps = draft.steps || [];
+    state.flowId = draft.flowId || data.flowId;
+    return; // draft wins — don't overwrite with existingFlow
+  }
 
   if (data.existingFlow) {
     state.flowName = data.existingFlow.name || 'Edit Flow';
@@ -124,10 +140,11 @@ chrome.runtime.onMessage.addListener((msg) => {
 // Mock keydown for Ctrl+V globally to enter verification mode
 // Also send message to content script to tell it we are in verification mode
 document.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.key.toLowerCase() === 'v') {
-    toggleVerificationMode();
+  if (e.key === 'Escape') {
+    if (_captureInsertIndex !== null) { exitInsertMode(); return; }
+    if (state.isVerificationMode) { toggleVerificationMode(); return; }
   }
-  if (e.key === 'Escape' && state.isVerificationMode) {
+  if (e.ctrlKey && e.key.toLowerCase() === 'v') {
     toggleVerificationMode();
   }
 });
@@ -203,11 +220,47 @@ function stopRecording() {
   state.isPaused = false;
   state.isVerificationMode = false;
   state.isHoverCaptureMode = false;
+  _captureInsertIndex = null; // exit insert mode
   if (state.targetTabId) {
     chrome.runtime.sendMessage({ type: 'STOP_RECORDING', tabId: state.targetTabId });
   }
   render();
 }
+
+// ── Local draft persistence (chrome.storage.local, no API calls) ───────────────
+function setAutosaveStatus(cls, message) {
+  const el = els.autosaveStatus;
+  if (!el) return;
+  el.className = `autosave-status ${cls}`;
+  el.textContent = message;
+}
+
+function persistDraft() {
+  const draft = {
+    projectId: state.projectId,
+    moduleId: state.moduleId,
+    flowId: state.flowId,
+    flowName: state.flowName,
+    defaultWait: state.defaultWait,
+    steps: state.steps
+  };
+  chrome.storage.local.set({ flow_draft: draft });
+  setAutosaveStatus('saved', '✓ Draft saved');
+}
+
+function clearLocalDraft() {
+  chrome.storage.local.remove('flow_draft');
+  setAutosaveStatus('', '');
+}
+
+// ── Debounced auto-save — fires 1s after last change ─────────────────────────
+let _autoSaveDebounce = null;
+function scheduleAutoSave() {
+  setAutosaveStatus('saving', '● Saving…');
+  clearTimeout(_autoSaveDebounce);
+  _autoSaveDebounce = setTimeout(persistDraft, 1000);
+}
+
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
 function mapLocalStepToBackend(step, index) {
@@ -301,15 +354,28 @@ function addStepFromCapture(data) {
   };
   
   pushState();
-  state.steps.push(step);
-  render();
-  scrollToBottom();
+  if (_captureInsertIndex !== null) {
+    const insertAt = _captureInsertIndex;
+    state.steps.splice(insertAt, 0, step);
+    _captureInsertIndex = insertAt + 1; // next capture goes right after this one
+    scheduleAutoSave();
+    render();
+    // Scroll the inserted card into view
+    setTimeout(() => {
+      const cards = els.timelineSteps.querySelectorAll('.step-card');
+      cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 60);
+  } else {
+    state.steps.push(step);
+    scheduleAutoSave();
+    render();
+    scrollToBottom();
+  }
 }
 
 function addVerificationStep(elData) {
   const selector = elData.cssSelector || 'Unknown Element';
   const verType = getSuggestedVerification(elData);
-  // Use text for Text Equals, value for Value/Selected Value, empty for Visible/Exists
   let expectedValue = '';
   if (verType === 'Text Equals') {
     expectedValue = elData.text || elData.value || '';
@@ -327,9 +393,22 @@ function addVerificationStep(elData) {
   };
   
   pushState();
-  state.steps.push(step);
-  render();
-  scrollToBottom();
+  if (_captureInsertIndex !== null) {
+    const insertAt = _captureInsertIndex;
+    state.steps.splice(insertAt, 0, step);
+    _captureInsertIndex = insertAt + 1;
+    scheduleAutoSave();
+    render();
+    setTimeout(() => {
+      const cards = els.timelineSteps.querySelectorAll('.step-card');
+      cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 60);
+  } else {
+    state.steps.push(step);
+    scheduleAutoSave();
+    render();
+    scrollToBottom();
+  }
 }
 
 function scrollToBottom() {
@@ -348,11 +427,17 @@ function render() {
   if (state.steps.length === 0) {
     els.emptyState.classList.remove('hidden');
     els.timelineSteps.innerHTML = '';
+    // Show a single inserter even when empty
+    els.timelineSteps.appendChild(createInserterRow(0));
   } else {
     els.emptyState.classList.add('hidden');
     els.timelineSteps.innerHTML = '';
+    // Inserter before the first step
+    els.timelineSteps.appendChild(createInserterRow(0));
     state.steps.forEach((step, index) => {
       els.timelineSteps.appendChild(createStepCard(step, index));
+      // Inserter after every step
+      els.timelineSteps.appendChild(createInserterRow(index + 1));
     });
   }
 
@@ -410,6 +495,50 @@ function getStepConfig(type) {
   };
   return configs[type] || { icon: '⚡', title: 'Action' };
 }
+
+// ── Step Inserter ─────────────────────────────────────────────────────────────
+// Creates the thin row between steps with the + button.
+// Clicking immediately starts page-capture at that index — no panel/modal.
+function createInserterRow(atIndex) {
+  const row = document.createElement('div');
+  row.className = 'step-inserter';
+  const isActive = _captureInsertIndex !== null && _captureInsertIndex === atIndex;
+  row.innerHTML = `
+    <div class="inserter-line"></div>
+    <button class="inserter-btn${isActive ? ' active' : ''}" title="Capture step from page here">
+      ${isActive ? '●' : '+'}
+    </button>
+    <div class="inserter-line"></div>
+  `;
+  row.querySelector('.inserter-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    captureNextAt(atIndex);
+  });
+  return row;
+}
+
+// ── Capture-insert mode ───────────────────────────────────────────────────────
+// _captureInsertIndex: null = normal append mode, number = insert-at mode
+
+function captureNextAt(index) {
+  _captureInsertIndex = index;
+  // Ensure recording is running so the page captures the next action
+  if (!state.isRecording || state.isPaused) {
+    state.isRecording = true;
+    state.isPaused = false;
+    if (state.targetTabId) {
+      chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId });
+    }
+  }
+  // Show the active inserter highlight
+  render();
+}
+
+function exitInsertMode() {
+  _captureInsertIndex = null;
+  render();
+}
+
 
 function createFieldRow(label, inputHtml) {
   const row = document.createElement('div');
@@ -601,7 +730,7 @@ function bindGlobalEvents() {
     stopRecording();
     els.btnFinish.disabled = true;
     els.btnFinish.textContent = 'Saving...';
-    
+
     const payload = {
       projectId: state.projectId,
       moduleId: state.moduleId,
@@ -618,6 +747,7 @@ function bindGlobalEvents() {
       } else {
         await ApiClient.saveFlowDraft({ authToken: state.authToken, payload });
       }
+      clearLocalDraft();  // wipe local draft after successful API save
       window.close();
     } catch (err) {
       alert('Failed to save flow: ' + err.message);
@@ -628,6 +758,7 @@ function bindGlobalEvents() {
   
   els.btnCancel.addEventListener('click', () => {
     if (confirm('Are you sure you want to cancel and clear all steps?')) {
+      clearLocalDraft();  // wipe local draft on cancel too
       state.steps = [];
       undoStack = [];
       redoStack = [];

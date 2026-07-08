@@ -582,3 +582,74 @@ input:checked + .slider:before {
 .step-card.drag-over {
   border-top: 2px dashed var(--primary);
 }
+
+/* Auto-save status indicator */
+.autosave-status {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  transition: color 0.3s;
+  flex-shrink: 0;
+}
+.autosave-status.saving { color: var(--warning); }
+.autosave-status.saved  { color: var(--success); }
+.autosave-status.error  { color: var(--danger); }
+
+/* ── Step Inserter ──────────────────────────────────────────────────────────── */
+.step-inserter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  padding: 0 4px;
+}
+.timeline-steps:hover .step-inserter,
+.step-inserter:focus-within,
+.step-inserter:has(.inserter-btn.active) {
+  opacity: 1;
+}
+.inserter-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-color), transparent);
+}
+.inserter-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--border-color);
+  background: var(--bg-dark);
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.18s ease;
+  padding: 0;
+}
+.inserter-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(99, 102, 241, 0.1);
+  transform: scale(1.15);
+  border-style: solid;
+}
+/* Active state — insert mode is live at this position */
+.inserter-btn.active {
+  border-color: var(--success);
+  border-style: solid;
+  color: var(--success);
+  background: rgba(16, 185, 129, 0.12);
+  font-size: 10px;
+  animation: inserter-pulse 1.2s ease-in-out infinite;
+}
+@keyframes inserter-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  50%       { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
