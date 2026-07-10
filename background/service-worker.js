@@ -222,6 +222,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
     }
 
+    // Forward step recordings from content script to popup
+    case 'STEP_RECORDED': {
+      console.log('[SW] Forwarding STEP_RECORDED:', msg.data?.target?.cssSelector);
+      notifyPopup({ type: 'STEP_RECORDED', data: msg.data });
+      sendResponse({ ok: true });
+      break;
+    }
+
+    // Forward element captures from content script to popup
+    case 'ELEMENT_CAPTURED': {
+      console.log('[SW] Forwarding ELEMENT_CAPTURED:', msg.data?.cssSelector);
+      notifyPopup({ type: 'ELEMENT_CAPTURED', data: msg.data });
+      sendResponse({ ok: true });
+      break;
+    }
+
 
     // Content script requests focus back on the recorder window after capture
     case 'FOCUS_RECORDER': {

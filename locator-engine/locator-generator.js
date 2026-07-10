@@ -1,9 +1,94 @@
 // ─── locator-generator.js ────────────────────────────────────────────────────
-// Generates ranked CSS / XPath locators for any DOM element.
-// Also extracts human-readable value from an element.
+// Generates the SHORTEST, MOST STABLE, and UNIQUE locators for DOM elements.
+// Thinks like Playwright/Cypress: validates uniqueness, prefers stable attributes.
 
 (function () {
   'use strict';
+
+  // ── Stability Detection Patterns ──────────────────────────────────────────
+  const UNSTABLE_ID_PATTERNS = [
+    /^[a-fA-F0-9]{24}$/,                    // Mongo ObjectId
+    /^[0-9a-fA-F-]{32,}$/,                  // UUID
+    /^[a-fA-F0-9]{16,}$/,                   // Long hex
+    /^\d+$/,                                 // Only digits
+    /^select2-/,                             // Select2 generated
+    /^react-/,                               // React generated
+    /^ember/,                                // Ember generated
+    /^ext-gen/,                              // ExtJS generated
+    /^cdk-/,                                 // Angular CDK
+    /^mat-/,                                 // Material UI
+    /^mui-/,                                 // MUI
+    /^radix-/,                               // Radix UI
+    /^headlessui-/,                          // Headless UI
+    /^:r[a-z0-9]+:$/,                        // React 18 IDs
+  ];
+
+  const UNSTABLE_CLASS_PATTERNS = [
+    /^(active|selected|hover|focus|show|hide|disabled|open|visible|checked|collapsed|expanded)$/i,
+    /^ng-/,
+    /^css-/,
+    /^jsx-/,
+    /^jss-?/,
+    /^emotion-/,
+    /^Mui/,
+    /^chakra-/,
+    /^ant-/,
+    /^_[a-zA-Z0-9]{5,}$/,                   // Hash-like
+    /^[a-z0-9]{32,}$/,                      // Long random string
+  ];
+
+  // ── Helper Functions ──────────────────────────────────────────────────────
+
+  function isStableId(id) {
+    if (!id) return false;
+    return !UNSTABLE_ID_PATTERNS.some(pattern => pattern.test(id));
+  }
+
+  function isStableClass(className) {
+    if (!className) return false;
+    return !UNSTABLE_CLASS_PATTERNS.some(pattern => pattern.test(className));
+  }
+
+  function getStableClasses(el) {
+    return Array.from(el.classList).filter(isStableClass);
+  }
+
+  function isUniqueCss(selector) {
+    try {
+      const matches = document.querySelectorAll(selector);
+      return matches.length === 1;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function isUniqueXPath(xpath) {
+    try {
+      const result = document.evaluate(
+        xpath,
+        document,
+        null,
+        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+        null
+      );
+      return result.snapshotLength === 1;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function escapeAttr(value) {
+    return value.replace(/"/g, '\\"');
+  }
+
+  function removeDuplicateCandidates(candidates) {
+    const seen = new Set();
+    return candidates.filter(c => {
+      if (seen.has(c.value)) return false;
+      seen.add(c.value);
+      return true;
+    });
+  }
 
   window.LocatorGenerator = {
 
@@ -11,118 +96,632 @@
     generate(el) {
       const candidates = [];
 
-      // 1. ID
-      if (el.id && !el.id.includes('select2-')) {
-        const sel = `#${CSS.escape(el.id)}`;
-        candidates.push({ type: 'ID', value: sel, score: 100, note: 'Unique ID — most stable' });
-      }
+      // 1. Test attributes (highest priority)
+      this._generateTestAttributeLocators(el, candidates);
 
-      // 2. data-testid / data-cy / data-qa
-      const testAttrs = ['data-testid', 'data-cy', 'data-qa', 'data-test'];
-      for (const attr of testAttrs) {
-        const val = el.getAttribute(attr);
-        if (val) {
-          const sel = `[${attr}="${val}"]`;
-          candidates.push({ type: attr, value: sel, score: 95, note: 'Test attribute — very stable' });
+      // 2. Stable ID
+      if (el.id && isStableId(el.id)) {
+        const sel = `#${CSS.escape(el.id)}`;
+        if (isUniqueCss(sel)) {
+          candidates.push({ type: 'ID', value: sel, score: 100, note: 'Stable unique ID' });
         }
       }
 
-      // 3. name attribute (forms)
+      // 3. Name attribute
       if (el.name) {
-        const sel = `${el.tagName.toLowerCase()}[name="${el.name}"]`;
-        candidates.push({ type: 'name', value: sel, score: 80, note: 'Form name attribute' });
+        this._generateNameLocators(el, candidates);
       }
 
-      // 4. aria-label
+      // 4. ARIA attributes
+      this._generateAriaLocators(el, candidates);
+
+      // 5. Placeholder
+      const placeholder = el.getAttribute('placeholder');
+      if (placeholder) {
+        const tag = el.tagName.toLowerCase();
+        const sel = `${tag}[placeholder="${escapeAttr(placeholder)}"]`;
+        if (isUniqueCss(sel)) {
+          candidates.push({ type: 'placeholder', value: sel, score: 86, note: 'Unique placeholder' });
+        }
+      }
+
+      // 6. Text-based locators
+      this._generateTextLocators(el, candidates);
+
+      // 7. Shortest CSS selector
+      const shortestCss = this._buildShortestCss(el);
+      if (shortestCss) {
+        const optimized = this._optimizeCss(shortestCss);
+        if (isUniqueCss(optimized)) {
+          candidates.push({ 
+            type: 'CSS', 
+            value: optimized, 
+            score: 80, 
+            note: 'Shortest unique CSS' 
+          });
+        }
+      }
+
+      // 8. Smart XPath
+      const smartXPath = this._buildSmartXPath(el);
+      if (smartXPath && isUniqueXPath(smartXPath)) {
+        candidates.push({ 
+          type: 'XPath', 
+          value: smartXPath, 
+          score: 75, 
+          note: 'Smart XPath' 
+        });
+      }
+
+      // 9. Select2 specific rules (preserve existing logic)
+      this._generateSelect2Locators(el, candidates);
+
+      // 10. Fallback: non-unique locators with low scores
+      if (candidates.length === 0) {
+        this._generateFallbackLocators(el, candidates, shortestCss, smartXPath);
+      }
+
+      // Remove duplicates and sort by score
+      const unique = removeDuplicateCandidates(candidates);
+      unique.sort((a, b) => b.score - a.score);
+
+      return {
+        bestLocator: unique[0]?.value ?? '',
+        confidence: unique[0]?.score ?? 0,
+        locators: unique
+      };
+    },
+
+    _generateTestAttributeLocators(el, candidates) {
+      const testAttrs = [
+        { name: 'data-testid', score: 98 },
+        { name: 'data-test', score: 97 },
+        { name: 'data-cy', score: 97 },
+        { name: 'data-qa', score: 97 },
+      ];
+
+      for (const { name, score } of testAttrs) {
+        const val = el.getAttribute(name);
+        if (val) {
+          const sel = `[${name}="${escapeAttr(val)}"]`;
+          if (isUniqueCss(sel)) {
+            candidates.push({ 
+              type: name, 
+              value: sel, 
+              score, 
+              note: `Unique ${name} attribute` 
+            });
+          }
+        }
+      }
+    },
+
+    _generateNameLocators(el, candidates) {
+      const tag = el.tagName.toLowerCase();
+      const name = el.name;
+      
+      // Try name alone
+      let sel = `${tag}[name="${escapeAttr(name)}"]`;
+      if (isUniqueCss(sel)) {
+        candidates.push({ 
+          type: 'name', 
+          value: sel, 
+          score: 90, 
+          note: 'Unique name attribute' 
+        });
+      } else {
+        // Try name + type
+        const type = el.getAttribute('type');
+        if (type) {
+          sel = `${tag}[name="${escapeAttr(name)}"][type="${escapeAttr(type)}"]`;
+          if (isUniqueCss(sel)) {
+            candidates.push({ 
+              type: 'name+type', 
+              value: sel, 
+              score: 90, 
+              note: 'Unique name+type combination' 
+            });
+          }
+        }
+      }
+
+      // XPath alternative
+      const xpath = `//${tag}[@name="${escapeAttr(name)}"]`;
+      if (isUniqueXPath(xpath)) {
+        candidates.push({ 
+          type: 'name-xpath', 
+          value: xpath, 
+          score: 88, 
+          note: 'Unique name (XPath)' 
+        });
+      }
+    },
+
+    _generateAriaLocators(el, candidates) {
       const ariaLabel = el.getAttribute('aria-label');
       if (ariaLabel) {
-        const sel = `[aria-label="${ariaLabel}"]`;
-        candidates.push({ type: 'aria-label', value: sel, score: 75, note: 'ARIA label — accessible' });
+        const sel = `[aria-label="${escapeAttr(ariaLabel)}"]`;
+        if (isUniqueCss(sel)) {
+          candidates.push({ 
+            type: 'aria-label', 
+            value: sel, 
+            score: 88, 
+            note: 'Unique ARIA label' 
+          });
+        }
       }
 
-      // 5. aria-labelledby → resolved text
+      const role = el.getAttribute('role');
+      if (role) {
+        const sel = `[role="${escapeAttr(role)}"]`;
+        if (isUniqueCss(sel)) {
+          candidates.push({ 
+            type: 'role', 
+            value: sel, 
+            score: 85, 
+            note: 'Unique ARIA role' 
+          });
+        }
+      }
+
       const labelledBy = el.getAttribute('aria-labelledby');
       if (labelledBy) {
         const labEl = document.getElementById(labelledBy);
         if (labEl) {
           const text = labEl.textContent.trim();
-          candidates.push({ type: 'aria-labelledby', value: `[aria-labelledby="${labelledBy}"]`, score: 70, note: `Labels: "${text}"` });
+          const sel = `[aria-labelledby="${escapeAttr(labelledBy)}"]`;
+          if (isUniqueCss(sel)) {
+            candidates.push({ 
+              type: 'aria-labelledby', 
+              value: sel, 
+              score: 85, 
+              note: `Labels: "${text.slice(0, 30)}${text.length > 30 ? '...' : ''}"` 
+            });
+          }
         }
       }
+    },
 
-      // 6. role
-      const role = el.getAttribute('role');
-      if (role) {
-        const roleSel = `[role="${role}"]`;
-        const unique = document.querySelectorAll(roleSel).length === 1;
-        if (unique) {
-          candidates.push({ type: 'role', value: roleSel, score: 65, note: 'Unique ARIA role' });
+    _generateTextLocators(el, candidates) {
+      const text = (el.textContent || '').trim();
+      const tag = el.tagName.toLowerCase();
+      
+      if (!text || text.length > 80) return;
+      if (!['button', 'a', 'label', 'span', 'li'].includes(tag)) return;
+
+      // Exact text match
+      const xpath = `//${tag}[normalize-space()="${escapeAttr(text)}"]`;
+      if (isUniqueXPath(xpath)) {
+        candidates.push({ 
+          type: 'text-exact', 
+          value: xpath, 
+          score: 85, 
+          note: `By exact text: "${text.slice(0, 40)}${text.length > 40 ? '...' : ''}"` 
+        });
+      }
+
+      // Text with class
+      const stableClasses = getStableClasses(el);
+      if (stableClasses.length > 0) {
+        const classCondition = stableClasses
+          .map(c => `contains(@class,'${escapeAttr(c)}')`)
+          .join(' and ');
+        const xpath2 = `//${tag}[${classCondition} and normalize-space()="${escapeAttr(text)}"]`;
+        if (isUniqueXPath(xpath2)) {
+          candidates.push({ 
+            type: 'text+class', 
+            value: xpath2, 
+            score: 87, 
+            note: `Text with class: "${text.slice(0, 30)}${text.length > 30 ? '...' : ''}"` 
+          });
         }
       }
+    },
 
-      // 7. Smart CSS path
-      const cssPath = buildCssPath(el);
-      if (cssPath) {
-        const unique = document.querySelectorAll(cssPath).length === 1;
-        candidates.push({ type: 'CSS', value: cssPath, score: unique ? 60 : 40, note: unique ? 'Unique CSS path' : 'CSS path (may match multiple)' });
-      }
-
-      // 8. XPath
-      const xpath = buildXPath(el);
-      candidates.push({ type: 'XPath', value: xpath, score: 50, note: 'Full XPath — brittle but precise' });
-
-      // 9. Select2 Specific Rules
+    _generateSelect2Locators(el, candidates) {
       const isSelect2 = (typeof el.className === 'string' && el.className.includes('select2')) || 
                         (el.id && el.id.includes('select2-')) || 
                         (el.closest && el.closest('.select2-container') !== null);
 
-      if (isSelect2) {
-        const tag = el.tagName.toLowerCase();
+      if (!isSelect2) return;
+
+      const tag = el.tagName.toLowerCase();
+      
+      // Find container with select2 ID
+      const container = (el.id && el.id.endsWith('-container') && el.id.startsWith('select2-')) 
+          ? el 
+          : (el.closest ? el.closest('[id^="select2-"][id$="-container"]') : null);
+          
+      if (container && container.id) {
+         const xpath = `//${container.tagName.toLowerCase()}[@id="${container.id}"]`;
+         if (isUniqueXPath(xpath)) {
+           candidates.push({ 
+             type: 'Select2 ID', 
+             value: xpath, 
+             score: 100, 
+             note: 'Select2 container ID' 
+           });
+         }
+         
+         // Try to find original select element
+         const match = container.id.match(/^select2-(.+)-container$/);
+         if (match && match[1] && document.getElementById(match[1])) {
+            const anchorXPath = `//select[@id="${match[1]}"]/following-sibling::span//span[contains(@class,"select2-selection__rendered")]`;
+            if (isUniqueXPath(anchorXPath)) {
+              candidates.push({ 
+                type: 'Select2 Anchor', 
+                value: anchorXPath, 
+                score: 90, 
+                note: 'Anchored to original select' 
+              });
+            }
+         }
+      }
+      
+      // Class-based selectors
+      if (typeof el.className === 'string') {
+        const select2Text = (el.textContent || '').trim();
         
-        const container = (el.id && el.id.endsWith('-container') && el.id.startsWith('select2-')) 
-            ? el 
-            : (el.closest ? el.closest('[id^="select2-"][id$="-container"]') : null);
-            
-        if (container && container.id) {
-           candidates.push({ type: 'Select2 ID', value: `//${container.tagName.toLowerCase()}[@id="${container.id}"]`, score: 100, note: 'Select2 container ID' });
-           const match = container.id.match(/^select2-(.+)-container$/);
-           if (match && match[1] && document.getElementById(match[1])) {
-              candidates.push({ type: 'Select2 Anchor', value: `//select[@id="${match[1]}"]/following-sibling::span//span[contains(@class,"select2-selection__rendered")]`, score: 90, note: 'Anchored to original select' });
+        if (el.className.includes('select2-selection__placeholder') && select2Text) {
+           const xpath = `//${tag}[contains(@class,"select2-selection__placeholder") and normalize-space()="${escapeAttr(select2Text)}"]`;
+           if (isUniqueXPath(xpath)) {
+             candidates.push({ 
+               type: 'Select2 Class', 
+               value: xpath, 
+               score: 95, 
+               note: 'Select2 placeholder' 
+             });
+           }
+        } else if (el.className.includes('select2-selection__rendered')) {
+           const xpath = `//${tag}[contains(@class,"select2-selection__rendered")]`;
+           if (isUniqueXPath(xpath)) {
+             candidates.push({ 
+               type: 'Select2 Class', 
+               value: xpath, 
+               score: 95, 
+               note: 'Select2 rendered element' 
+             });
+           }
+        } else if (el.className.includes('select2-results__option') && select2Text) {
+           const xpath = `//${tag}[contains(@class,"select2-results__option") and normalize-space()="${escapeAttr(select2Text)}"]`;
+           if (isUniqueXPath(xpath)) {
+             candidates.push({ 
+               type: 'Select2 Option', 
+               value: xpath, 
+               score: 95, 
+               note: 'Select2 dropdown option' 
+             });
            }
         }
+      }
+      
+      // ARIA role fallback
+      if (el.getAttribute('role') === 'combobox') {
+         const xpath = `//${tag}[@role="combobox"]`;
+         if (isUniqueXPath(xpath)) {
+           candidates.push({ 
+             type: 'Select2 ARIA', 
+             value: xpath, 
+             score: 75, 
+             note: 'Select2 combobox role' 
+           });
+         }
+      }
+    },
+
+    _buildShortestCss(el) {
+      const tag = el.tagName.toLowerCase();
+      const stableClasses = getStableClasses(el);
+
+      // Try progressively more specific selectors
+      const attempts = [];
+
+      // 1. Stable ID (even if not globally unique, might be unique with parent)
+      if (el.id && isStableId(el.id)) {
+        attempts.push(`#${CSS.escape(el.id)}`);
+        attempts.push(`${tag}#${CSS.escape(el.id)}`);
+      }
+
+      // 2. Just tag
+      attempts.push(tag);
+
+      // 3. Tag + first stable class
+      if (stableClasses.length > 0) {
+        attempts.push(`${tag}.${CSS.escape(stableClasses[0])}`);
+      }
+
+      // 4. Tag + all stable classes
+      if (stableClasses.length > 1) {
+        const classStr = stableClasses.map(c => `.${CSS.escape(c)}`).join('');
+        attempts.push(`${tag}${classStr}`);
+      }
+
+      // 4. Add stable/semantic attributes
+      const stableAttrNames = ['role', 'name', 'type', 'alt', 'title', 'href', 'for'];
+      const stableAttrs = [];
+      for (const attr of el.attributes) {
+        if (stableAttrNames.includes(attr.name.toLowerCase())) {
+          stableAttrs.push({ name: attr.name, value: attr.value });
+        }
+      }
+
+      // Try combinations of tag + class + stable attribute
+      for (const attr of stableAttrs) {
+        const attrStr = `[${attr.name}="${escapeAttr(attr.value)}"]`;
+        attempts.push(`${tag}${attrStr}`); // Just tag + attr
         
-        if (typeof el.className === 'string') {
-          const select2Text = (el.textContent || '').trim();
-          if (el.className.includes('select2-selection__placeholder') && select2Text) {
-             candidates.push({ type: 'Select2 Class', value: `//${tag}[contains(@class,"select2-selection__placeholder") and normalize-space(.)="${select2Text}"]`, score: 95, note: 'Select2 placeholder' });
-          } else if (el.className.includes('select2-selection__rendered')) {
-             candidates.push({ type: 'Select2 Class', value: `//${tag}[contains(@class,"select2-selection__rendered")]`, score: 95, note: 'Select2 rendered element' });
-          } else if (el.className.includes('select2-results__option') && select2Text) {
-             candidates.push({ type: 'Select2 Option', value: `//${tag}[contains(@class,"select2-results__option") and normalize-space(.)="${select2Text}"]`, score: 95, note: 'Select2 dropdown option' });
+        if (stableClasses.length > 0) {
+          const classStr = stableClasses.map(c => `.${CSS.escape(c)}`).join('');
+          attempts.push(`${tag}${classStr}${attrStr}`); // Tag + classes + attr
+        }
+      }
+
+      // Test each attempt
+      for (const sel of attempts) {
+        if (isUniqueCss(sel)) {
+          return sel;
+        }
+      }
+
+      // 5. Add parent context
+      let parent = el.parentElement;
+      let depth = 0;
+      const maxDepth = 5; // Increased depth to reach modal wrappers
+
+      while (parent && parent !== document.body && depth < maxDepth) {
+        const parentTag = parent.tagName.toLowerCase();
+        const parentClasses = getStableClasses(parent);
+        
+        let parentSel = parentTag;
+        // Prioritize parent's stable ID to guarantee uniqueness
+        if (parent.id && isStableId(parent.id)) {
+          parentSel = `#${CSS.escape(parent.id)}`;
+        } else if (parentClasses.length > 0) {
+          parentSel += `.${CSS.escape(parentClasses[0])}`;
+        }
+
+        // Try parent + child combinations
+        for (const childSel of attempts) {
+          const combined = `${parentSel} ${childSel}`;
+          if (isUniqueCss(combined)) {
+            return combined;
           }
         }
+
+        parent = parent.parentElement;
+        depth++;
+      }
+
+      // Fallback: return best attempt even if not unique
+      return attempts[attempts.length - 1] || tag;
+    },
+
+    _optimizeCss(selector) {
+      if (!selector) return selector;
+
+      let current = selector;
+      const parts = selector.split(/\s+/);
+      
+      if (parts.length <= 1) return current;
+
+      // Try removing unnecessary parts
+      const removable = ['div', 'span', 'tbody', 'tr'];
+
+      for (let i = 0; i < parts.length; i++) {
+        const tag = parts[i].split(/[.#\[]/)[0];
         
-        if (el.getAttribute('role') === 'combobox') {
-           candidates.push({ type: 'Select2 ARIA', value: `//${tag}[@role="combobox"]`, score: 75, note: 'Select2 combobox role' });
+        if (removable.includes(tag)) {
+          // Try removing this part
+          const newParts = [...parts];
+          newParts.splice(i, 1);
+          const newSelector = newParts.join(' ');
+          
+          if (isUniqueCss(newSelector)) {
+            current = newSelector;
+            // Recursively optimize further
+            return this._optimizeCss(current);
+          }
         }
       }
 
-      // 10. Text content (buttons / links)
-      const text = (el.textContent || '').trim();
-      if (text && text.length < 60 && ['BUTTON', 'A', 'LABEL', 'SPAN', 'LI'].includes(el.tagName)) {
-        const byText = `//${el.tagName.toLowerCase()}[normalize-space(.)="${text}"]`;
-        candidates.push({ type: 'text', value: byText, score: isSelect2 ? 50 : 55, note: `By visible text: "${text}"` });
+      // Try removing nth-child/nth-of-type
+      if (current.includes(':nth-')) {
+        const withoutNth = current.replace(/:nth-(child|of-type)\(\d+\)/g, '');
+        if (isUniqueCss(withoutNth)) {
+          return withoutNth;
+        }
       }
 
-      // Sort descending by score
-      candidates.sort((a, b) => b.score - a.score);
-
-      return {
-        bestLocator: candidates[0]?.value ?? '',
-        confidence: candidates[0]?.score ?? 0,
-        locators: candidates
-      };
+      return current;
     },
+
+    _buildSmartXPath(el) {
+      const tag = el.tagName.toLowerCase();
+      const stableClasses = getStableClasses(el);
+
+      // Try ID first
+      if (el.id && isStableId(el.id)) {
+        const idXPath = `//${tag}[@id="${escapeAttr(el.id)}"]`;
+        if (isUniqueXPath(idXPath)) return idXPath;
+        
+        // Even if not unique globally, try it with classes just in case
+        if (stableClasses.length > 0) {
+          const classConditions = stableClasses.map(c => `contains(@class,'${escapeAttr(c)}')`).join(' and ');
+          const combinedXpath = `//${tag}[@id="${escapeAttr(el.id)}" and ${classConditions}]`;
+          if (isUniqueXPath(combinedXpath)) return combinedXpath;
+        }
+      }
+
+      // Try attribute-based XPath first (stable semantic attributes)
+      const attrs = ['name', 'type', 'role', 'alt', 'title', 'href'];
+      const stableAttrs = [];
+      for (const attr of attrs) {
+        const val = el.getAttribute(attr);
+        if (val) stableAttrs.push({ name: attr, value: val });
+      }
+
+      for (const attr of stableAttrs) {
+        const xpath = `//${tag}[@${attr.name}="${escapeAttr(attr.value)}"]`;
+        if (isUniqueXPath(xpath)) return xpath;
+        
+        // If not unique alone, try combining with classes
+        if (stableClasses.length > 0) {
+          const classConditions = stableClasses.map(c => `contains(@class,'${escapeAttr(c)}')`).join(' and ');
+          const combinedXpath = `//${tag}[${classConditions} and @${attr.name}="${escapeAttr(attr.value)}"]`;
+          if (isUniqueXPath(combinedXpath)) return combinedXpath;
+        }
+      }
+
+      // Try class-based XPath
+      if (stableClasses.length > 0) {
+        const classConditions = stableClasses
+          .map(c => `contains(@class,'${escapeAttr(c)}')`)
+          .join(' and ');
+        const xpath = `//${tag}[${classConditions}]`;
+        if (isUniqueXPath(xpath)) {
+          return xpath;
+        }
+      }
+
+      // Try parent combinations if nothing was unique
+      const attempts = [];
+      if (el.id && isStableId(el.id)) attempts.push(`//${tag}[@id="${escapeAttr(el.id)}"]`);
+      for (const attr of stableAttrs) {
+        attempts.push(`//${tag}[@${attr.name}="${escapeAttr(attr.value)}"]`);
+      }
+      if (stableClasses.length > 0) {
+        const classConditions = stableClasses.map(c => `contains(@class,'${escapeAttr(c)}')`).join(' and ');
+        attempts.push(`//${tag}[${classConditions}]`);
+      }
+      attempts.push(`//${tag}`);
+
+      let parent = el.parentElement;
+      let depth = 0;
+      const maxDepth = 5;
+
+      while (parent && parent !== document.body && depth < maxDepth) {
+        let parentXpath = `//${parent.tagName.toLowerCase()}`;
+        if (parent.id && isStableId(parent.id)) {
+          parentXpath += `[@id="${escapeAttr(parent.id)}"]`;
+        } else {
+          const pClasses = getStableClasses(parent);
+          if (pClasses.length > 0) {
+            parentXpath += `[contains(@class,'${escapeAttr(pClasses[0])}')]`;
+          }
+        }
+
+        for (const childXPath of attempts) {
+          // Combine //parent... with //child... -> //parent...//child...
+          const combined = parentXpath + childXPath;
+          if (isUniqueXPath(combined)) return combined;
+        }
+
+        parent = parent.parentElement;
+        depth++;
+      }
+
+      // Absolute Fallback: best attempt even if not unique
+      return attempts[0] || `//${tag}`;
+    },
+
+    _generateFallbackLocators(el, candidates, shortestCss, smartXPath) {
+      const tag = el.tagName.toLowerCase();
+      
+      // 1. Non-unique ID (still much better than classes)
+      if (el.id && isStableId(el.id)) {
+        candidates.push({ 
+          type: 'ID', 
+          value: `#${CSS.escape(el.id)}`, 
+          score: 45, 
+          note: 'Non-unique ID (needs improvement but preferred)' 
+        });
+      }
+
+      // 2. Best attempted XPath with parent context
+      if (smartXPath) {
+        candidates.push({ 
+          type: 'XPath', 
+          value: smartXPath, 
+          score: 43, 
+          note: 'Non-unique XPath (has parent context)' 
+        });
+      }
+
+      // 3. Best attempted CSS with parent context
+      if (shortestCss) {
+        candidates.push({ 
+          type: 'CSS', 
+          value: shortestCss, 
+          score: 42, 
+          note: 'Non-unique CSS (has parent context)' 
+        });
+      }
+
+      // 4. Basic Non-unique CSS classes
+      const stableClasses = getStableClasses(el);
+      if (stableClasses.length > 0) {
+        const classStr = stableClasses.map(c => `.${CSS.escape(c)}`).join('');
+        candidates.push({ 
+          type: 'CSS', 
+          value: `${tag}${classStr}`, 
+          score: 40, 
+          note: 'Non-unique CSS classes' 
+        });
+      }
+
+      // 5. Full DOM path as last resort
+      const fullPath = this._buildFullDomPath(el);
+      if (isUniqueCss(fullPath)) {
+        candidates.push({ 
+          type: 'DOM Path', 
+          value: fullPath, 
+          score: 50, // Beats non-unique fallbacks (45, 43, 42) because uniqueness is critical
+          note: 'Unique full DOM path (brittle — add test attributes)' 
+        });
+      } else {
+        candidates.push({ 
+          type: 'DOM Path', 
+          value: fullPath, 
+          score: 20, 
+          note: 'Non-unique DOM path' 
+        });
+      }
+    },
+
+    _buildFullDomPath(el) {
+      const parts = [];
+      let node = el;
+
+      while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.body) {
+        let selector = node.tagName.toLowerCase();
+
+        if (node.id && isStableId(node.id)) {
+          selector = `#${CSS.escape(node.id)}`;
+          parts.unshift(selector);
+          break;
+        }
+
+        const stableClasses = getStableClasses(node);
+        if (stableClasses.length > 0) {
+          selector += `.${CSS.escape(stableClasses[0])}`;
+        }
+
+        if (node.parentElement) {
+          const siblings = Array.from(node.parentElement.children)
+            .filter(s => s.tagName === node.tagName);
+          if (siblings.length > 1) {
+            const idx = siblings.indexOf(node) + 1;
+            selector += `:nth-of-type(${idx})`;
+          }
+        }
+
+        parts.unshift(selector);
+        node = node.parentElement;
+      }
+
+      return parts.join(' > ');
+    },
+
 
     // Extract visible text shown to the user — used for verification value only
     extractValue(el) {
@@ -159,72 +758,5 @@
       };
     }
   };
-
-  // ── CSS path builder ───────────────────────────────────────────────────────
-  function buildCssPath(el) {
-    const parts = [];
-    let node = el;
-
-    while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.body) {
-      let selector = node.tagName.toLowerCase();
-
-      if (node.id && !node.id.includes('select2-')) {
-        selector = `#${CSS.escape(node.id)}`;
-        parts.unshift(selector);
-        break; // ID is enough
-      }
-
-      // Prefer stable class
-      const stableClass = Array.from(node.classList).find(c =>
-        !c.match(/^(active|selected|hover|focus|disabled|open|visible|show|hide|\d)/)
-      );
-      if (stableClass) selector += `.${CSS.escape(stableClass)}`;
-
-      // Add :nth-child only when needed for uniqueness
-      if (node.parentElement) {
-        const siblings = Array.from(node.parentElement.children).filter(s => s.tagName === node.tagName);
-        if (siblings.length > 1) {
-          const idx = siblings.indexOf(node) + 1;
-          selector += `:nth-of-type(${idx})`;
-        }
-      }
-
-      parts.unshift(selector);
-      node = node.parentElement;
-    }
-
-    return parts.join(' > ');
-  }
-
-  // ── XPath builder ─────────────────────────────────────────────────────────
-  function buildXPath(el) {
-    const parts = [];
-    let node = el;
-
-    while (node && node.nodeType === Node.ELEMENT_NODE) {
-      const tag = node.tagName.toLowerCase();
-
-      if (node.id && !node.id.includes('select2-')) {
-        parts.unshift(`//${tag}[@id="${node.id}"]`);
-        break;
-      }
-
-      let part = tag;
-      if (node.parentElement) {
-        const siblings = Array.from(node.parentElement.children).filter(s => s.tagName === node.tagName);
-        if (siblings.length > 1) {
-          const idx = siblings.indexOf(node) + 1;
-          part += `[${idx}]`;
-        }
-      }
-
-      parts.unshift(part);
-      node = node.parentElement;
-    }
-
-    // If we broke out at an ID, the first entry already has //tag[@id=...]
-    if (parts[0]?.startsWith('//')) return parts.join('/');
-    return '//' + parts.join('/');
-  }
 
 })();

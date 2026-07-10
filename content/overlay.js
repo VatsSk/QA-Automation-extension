@@ -60,6 +60,7 @@
 
       document.addEventListener('mouseover', onMouseOver, true);
       document.addEventListener('mouseout', onMouseOut, true);
+      document.addEventListener('mousedown', onClick, true);
       document.addEventListener('click', onClick, true);
       document.addEventListener('keydown', onKeyDown, true);
     },
@@ -170,6 +171,8 @@
   // ONLY listens on click. No browser events (change/input) are recorded.
   // On click, we inspect the element and create the correct step type.
   function bindSmartListeners() {
+    // Listen to both mousedown and click to capture disappearing dropdown elements.
+    // The strict 400ms debounce inside onSmartClick will safely ignore the redundant click.
     document.addEventListener('mousedown', onSmartClick, true);
     document.addEventListener('click', onSmartClick, true);
   }
@@ -199,7 +202,19 @@
       value: value
     };
 
-    document.dispatchEvent(new CustomEvent('qa-step-recorded', { detail: stepData }));
+    console.log('[Overlay] Dispatching step:', {
+      action,
+      selector: loc.bestLocator,
+      element: el.tagName,
+      value: value ? value.substring(0, 20) : '',
+      timestamp: Date.now()
+    });
+
+    document.dispatchEvent(new CustomEvent('qa-step-recorded', { 
+      detail: stepData,
+      bubbles: false,  // Don't bubble to prevent multiple captures
+      cancelable: false
+    }));
   }
 
   // Walk up the DOM to find the nearest meaningful interactive element.
@@ -214,6 +229,12 @@
       if (role && ['button', 'checkbox', 'radio', 'link', 'tab', 'menuitem', 'option', 'switch'].includes(role)) return node;
       // Check for clickable attributes
       if (node.onclick || node.getAttribute('ng-click') || node.getAttribute('@click') || node.getAttribute('data-action')) return node;
+      
+      // Check for computed cursor:pointer (common for non-semantic React/Vue buttons)
+      try {
+        if (window.getComputedStyle(node).cursor === 'pointer') return node;
+      } catch (e) {}
+      
       node = node.parentElement;
     }
     return el; // Return original element instead of null
@@ -254,26 +275,45 @@
   }
 
   let lastClickTime = 0;
-  let lastClickTarget = null;
+  let lastResolvedElement = null;  // Track the resolved interactive element
+  let clickDebugCounter = 0;  // Track click attempts
 
   function onSmartClick(e) {
+    clickDebugCounter++;
+    const debugId = clickDebugCounter;
+    
+    console.log(`[Overlay] Click #${debugId} - Event received:`, {
+      type: e.type,
+      target: e.target.tagName,
+      targetClass: e.target.className,
+      targetId: e.target.id
+    });
+    
     if (!smartRecording || smartPaused) return;
     if (!e.isTrusted) return;
 
-    // Deduplicate mousedown + click
-    const now = Date.now();
-    if (e.type === 'click') {
-      if (now - lastClickTime < 400) return;
-      if (lastClickTarget === e.target && now - lastClickTime < 2000) return;
-    }
-    lastClickTime = now;
-    lastClickTarget = e.target;
-
-    if (smartHoverCapture) {
+    // 🚨 Prevent default IMMEDIATELY for capture modes, before debounce can drop the event.
+    // This ensures both 'mousedown' and the subsequent 'click' are blocked from the webpage.
+    if (smartHoverCapture || smartVerification) {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
+    }
 
+    // 🆕 STRICT Global Deduplication (Protects ALL modes: hover, verify, record)
+    const now = Date.now();
+    const timeSinceLastClick = now - lastClickTime;
+    
+    // Ignore ANY click within 400ms to absolutely prevent multi-step generation 
+    if (timeSinceLastClick < 400) {
+      console.log(`[Overlay] Click #${debugId} - Ignored (global debounce, ${timeSinceLastClick}ms gap)`);
+      return;
+    }
+    
+    lastClickTime = now;
+    console.log(`[Overlay] Click #${debugId} - Proceeding (${timeSinceLastClick}ms gap)`);
+
+    if (smartHoverCapture) {
       const el = e.target;
       if (el === highlight || el === tooltip || el === banner) return;
 
@@ -291,10 +331,8 @@
           },
           value: ''
         };
-        // Use regular step recorded since it translates directly to a hover step
         document.dispatchEvent(new CustomEvent('qa-step-recorded', { detail: data }));
         
-        // Notify popup to toggle hover capture mode off
         chrome.runtime.sendMessage({ type: 'TOGGLE_HOVER_MODE_OFF' });
         window.QAOverlay.handleSmartCommand('STOP_HOVER_CAPTURE');
       }
@@ -302,10 +340,6 @@
     }
 
     if (smartVerification) {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      
       const el = e.target;
       if (el === highlight || el === tooltip || el === banner) return;
       
@@ -331,12 +365,24 @@
     let el = e.target;
     if (el === highlight || el === tooltip || el === banner) return;
 
-    // Resolve to the nearest interactive element — if none found, ignore
-    el = findInteractiveAncestor(el);
-    if (!el) return; // Plain text click → do nothing
+    // Resolve to the nearest interactive element BEFORE deduplication check
+    const resolvedEl = findInteractiveAncestor(el);
+    if (!resolvedEl) {
+      console.log(`[Overlay] Click #${debugId} - No interactive element found, ignoring`);
+      return; // Plain text click → do nothing
+    }
 
-    const { action, value } = detectStepFromElement(el);
-    dispatchSmartStep(action, el, value);
+    console.log(`[Overlay] Click #${debugId} - Resolved element:`, {
+      tag: resolvedEl.tagName,
+      id: resolvedEl.id,
+      className: resolvedEl.className,
+      ariaLabel: resolvedEl.getAttribute('aria-label')
+    });
+
+    lastResolvedElement = resolvedEl;
+
+    const { action, value } = detectStepFromElement(resolvedEl);
+    dispatchSmartStep(action, resolvedEl, value);
   }
 
   // ── Event handlers ────────────────────────────────────────────────────────
@@ -366,14 +412,29 @@
   }
 
   function onClick(e) {
-    if (!active || !captureCallback) return; // Only block if explicit manual capture
-    
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
+    if (!e.isTrusted) return;
 
-    const el = e.target;
+    // Prevent default immediately if active, or if we are dropping a redundant click
+    const now = Date.now();
+    const timeSinceLastClick = now - lastClickTime;
+    
+    if (active || timeSinceLastClick < 400) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    }
+
+    if (!active || !captureCallback) return; // Only process if active
+    if (timeSinceLastClick < 400) return; // Drop duplicates
+    lastClickTime = now;
+
+    let el = e.target;
     if (el === highlight || el === tooltip || el === banner) return;
+
+    // 🚨 CRITICAL FIX: Resolve to nearest interactive element just like smart capture
+    // This prevents capturing a raw <span> inside a <button> instead of the <button> itself!
+    const resolvedEl = findInteractiveAncestor(el);
+    if (resolvedEl) el = resolvedEl;
 
     const result = {};
 
@@ -512,6 +573,7 @@
     banner.style.display = 'none';
     document.removeEventListener('mouseover', onMouseOver, true);
     document.removeEventListener('mouseout', onMouseOut, true);
+    document.removeEventListener('mousedown', onClick, true);
     document.removeEventListener('click', onClick, true);
     document.removeEventListener('keydown', onKeyDown, true);
   }
