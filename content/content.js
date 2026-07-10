@@ -73,11 +73,29 @@
   });
 
   // Listen for custom events from overlay.js and forward them to the background script
+  // Use { once: false } but track if we've already sent this specific event
+  let lastEventDetail = null;
+  let lastEventTime = 0;
+  
   document.addEventListener('qa-step-recorded', (e) => {
+    const now = Date.now();
+    const detail = JSON.stringify(e.detail);
+    
+    // Prevent duplicate event forwarding within 500ms
+    if (detail === lastEventDetail && (now - lastEventTime) < 500) {
+      console.log('[Content] Duplicate qa-step-recorded event blocked');
+      return;
+    }
+    
+    lastEventDetail = detail;
+    lastEventTime = now;
+    
+    console.log('[Content] Forwarding qa-step-recorded:', e.detail.target?.cssSelector);
     chrome.runtime.sendMessage({ type: 'STEP_RECORDED', data: e.detail });
   });
 
   document.addEventListener('qa-element-captured', (e) => {
+    console.log('[Content] Forwarding qa-element-captured:', e.detail.cssSelector);
     chrome.runtime.sendMessage({ type: 'ELEMENT_CAPTURED', data: e.detail });
   });
 

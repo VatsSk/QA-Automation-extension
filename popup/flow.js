@@ -104,10 +104,26 @@ async function loadSession() {
 }
 
 // ── Listeners ─────────────────────────────────────────────────────────────────
+let messageCounter = 0;
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'STEP_RECORDED') {
+    messageCounter++;
+    console.log(`[Flow] Message #${messageCounter} - Received STEP_RECORDED:`, {
+      selector: msg.data?.target?.cssSelector,
+      action: msg.data?.action,
+      timestamp: Date.now()
+    });
+  } else {
+    console.log('[Flow] Received message:', msg.type);
+  }
+  
+  if (msg.type === 'STEP_RECORDED') {
     if (state.isRecording && !state.isPaused && !state.isVerificationMode) {
+      console.log('[Flow] Processing STEP_RECORDED');
       addStepFromCapture(msg.data);
+    } else {
+      console.log('[Flow] Ignoring STEP_RECORDED - not in recording mode');
     }
   } else if (msg.type === 'ELEMENT_CAPTURED') {
     if (state.isVerificationMode) {
@@ -374,15 +390,49 @@ function getSuggestedVerification(elData) {
   return 'Text Equals';
 }
 
+  // Deduplication: track last recorded step
+let lastRecordedStep = { selector: '', type: '', value: '', timestamp: 0 };
+
 function addStepFromCapture(data) {
   const type = mapActionToStepType(data);
   const selector = data.target.cssSelector || 'Unknown Element';
+  const value = data.value || '';
+  
+  // Prevent duplicate steps
+  const now = Date.now();
+  const timeSinceLastStep = now - lastRecordedStep.timestamp;
+  
+  // 1. Strict global debounce (ignore ANYTHING within 400ms of last step)
+  // 2. Exact match debounce (ignore exact same action within 1000ms)
+  const isDuplicate = 
+    timeSinceLastStep < 400 || 
+    (
+      lastRecordedStep.selector === selector &&
+      lastRecordedStep.type === type &&
+      lastRecordedStep.value === value &&
+      timeSinceLastStep < 1000
+    );
+  
+  if (isDuplicate) {
+    console.log('[Flow] Duplicate step ignored:', { 
+      type, 
+      selector, 
+      value,
+      timeSinceLastStep 
+    });
+    return;
+  }
+  
+  console.log('[Flow] Adding step:', { type, selector, value });
+  
+  // Update last recorded step
+  lastRecordedStep = { selector, type, value, timestamp: now };
   
   const step = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
     type: type,
     selector: selector,
-    value: data.value || '',
+    value: value,
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
   
@@ -415,6 +465,22 @@ function addVerificationStep(elData) {
   } else if (['Value', 'Selected Value', 'Image Source', 'Alt Text'].includes(verType)) {
     expectedValue = elData.value || elData.text || '';
   }
+  
+  const now = Date.now();
+  const timeSinceLastStep = now - lastRecordedStep.timestamp;
+  const isDuplicate = 
+    timeSinceLastStep < 400 || 
+    (
+      lastRecordedStep.selector === selector &&
+      lastRecordedStep.type === 'verify' &&
+      lastRecordedStep.verificationType === verType &&
+      lastRecordedStep.value === expectedValue &&
+      timeSinceLastStep < 1000
+    );
+    
+  if (isDuplicate) return;
+  
+  lastRecordedStep = { selector, type: 'verify', verificationType: verType, value: expectedValue, timestamp: now };
   
   const step = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
