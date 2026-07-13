@@ -7,19 +7,30 @@ let targetTabId = null;         // The tab the user is recording against
 let popupTabId = null;          // The tab inside the recorder window
 let isCreatingWindow = false;   // Guard against onActivated race during window creation
 
+// ── Recording state tracked in the SW so we can auto-reinject after navigation ─
+let recordingState = {
+  isRecording: false,
+  isPaused: false,
+  isVerification: false,
+  isHoverCapture: false,
+  lockedTabId: null    // When recording, we lock to this specific tab
+};
+
 // ── Persist / restore window IDs across service-worker restarts ──────────────
 // MV3 service workers are ephemeral — Chrome can terminate them at any time.
 // We persist recorderWindowId & popupTabId in chrome.storage.session so that
 // a restarted service worker can re-adopt an already-open recorder window
 // instead of creating a duplicate.
 async function persistWindowState() {
-  await chrome.storage.session.set({ recorderWindowId, popupTabId });
+  await chrome.storage.session.set({ recorderWindowId, popupTabId, targetTabId, recordingState });
 }
 
 async function restoreWindowState() {
-  const s = await chrome.storage.session.get(['recorderWindowId', 'popupTabId']);
+  const s = await chrome.storage.session.get(['recorderWindowId', 'popupTabId', 'targetTabId', 'recordingState']);
   if (s.recorderWindowId) recorderWindowId = s.recorderWindowId;
   if (s.popupTabId) popupTabId = s.popupTabId;
+  if (s.targetTabId) targetTabId = s.targetTabId;
+  if (s.recordingState) recordingState = s.recordingState;
 }
 
 async function clearWindowState() {
@@ -42,16 +53,22 @@ async function isRecorderWindowAlive() {
 // ── Open / focus the recorder window when the toolbar icon is clicked ────────
 chrome.action.onClicked.addListener(async (tab) => {
   if (isCreatingWindow) return;
-  targetTabId = tab.id;
 
   // Restore persisted state in case the service worker was restarted
   await restoreWindowState();
 
   if (await isRecorderWindowAlive()) {
-    // Window is already open — just focus it and notify about the new tab
+    // Window is already open — just focus it
+    // Do NOT change targetTabId if we are locked to a specific tab (recording in progress)
     try {
       await chrome.windows.update(recorderWindowId, { focused: true });
-      notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId: targetTabId });
+      if (!recordingState.lockedTabId) {
+        // Not locked — safe to switch target to the clicked tab
+        targetTabId = tab.id;
+        await persistWindowState();
+        notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId: targetTabId });
+      }
+      // If locked, we just focus the window without changing the target
       return;
     } catch (_) {
       await clearWindowState();
@@ -60,6 +77,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 
   // Save the real target tab before async window creation
   const savedTargetTabId = tab.id;
+  targetTabId = tab.id;
   isCreatingWindow = true;
 
   // Create a new detached window — NOT a popup, so it stays open
@@ -91,6 +109,14 @@ chrome.action.onClicked.addListener(async (tab) => {
 // ── Track when our recorder window is closed ─────────────────────────────────
 chrome.windows.onRemoved.addListener((windowId) => {
   if (windowId === recorderWindowId) {
+    // Reset recording state when popup window is closed
+    recordingState = {
+      isRecording: false,
+      isPaused: false,
+      isVerification: false,
+      isHoverCapture: false,
+      lockedTabId: null
+    };
     clearWindowState();
   }
 });
@@ -101,13 +127,66 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
   if (windowId === recorderWindowId) return;
   // Ignore activations triggered by window creation (recorderWindowId not yet set)
   if (isCreatingWindow) return;
+
+  // Restore state in case SW restarted
+  await restoreWindowState();
+
+  // ── Tab Lock: If recording is active and locked to a specific tab, do NOT switch ──
+  if (recordingState.lockedTabId) {
+    // Don't change targetTabId — recording stays on the locked tab
+    return;
+  }
+
   targetTabId = tabId;
+  await persistWindowState();
   notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId });
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+// ── Re-inject content scripts after page navigation ──────────────────────────
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  // Restore state in case SW restarted
+  await restoreWindowState();
+
   if (tabId !== targetTabId) return;
-  if (changeInfo.status === 'complete' || changeInfo.url) {
+
+  if (changeInfo.status === 'complete') {
+    // Always notify popup about tab update (URL change, title change, etc.)
+    notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId, url: tab.url, title: tab.title });
+
+    // ── Auto re-inject if recording was active ────────────────────────────
+    // Page navigation destroys all injected scripts. We must re-inject them
+    // and restore the recording state so the user doesn't notice any interruption.
+    if (recordingState.isRecording) {
+      console.log('[SW] Page navigated during recording — re-injecting content scripts...');
+      try {
+        // Force re-injection by clearing any cached promise for this tab
+        injectionPromises.delete(tabId);
+        await ensureContentScript(tabId);
+
+        // Restore the recording state on the freshly injected scripts
+        // Small delay to let scripts fully initialize
+        await new Promise(r => setTimeout(r, 200));
+        await chrome.tabs.sendMessage(tabId, { type: 'START_RECORDING' }).catch(() => {});
+
+        if (recordingState.isVerification) {
+          await new Promise(r => setTimeout(r, 100));
+          await chrome.tabs.sendMessage(tabId, { type: 'START_VERIFICATION' }).catch(() => {});
+        }
+        if (recordingState.isHoverCapture) {
+          await new Promise(r => setTimeout(r, 100));
+          await chrome.tabs.sendMessage(tabId, { type: 'START_HOVER_CAPTURE' }).catch(() => {});
+        }
+        if (recordingState.isPaused) {
+          await chrome.tabs.sendMessage(tabId, { type: 'PAUSE_RECORDING' }).catch(() => {});
+        }
+
+        console.log('[SW] Content scripts re-injected and recording state restored.');
+      } catch (err) {
+        console.warn('[SW] Failed to re-inject after navigation:', err.message);
+      }
+    }
+  } else if (changeInfo.url) {
+    // URL changed but page hasn't finished loading yet — just notify popup
     notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId, url: tab.url, title: tab.title });
   }
 });
@@ -152,22 +231,100 @@ chrome.runtime.onMessageExternal.addListener(
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
 
-    case 'START_RECORDING':
-    case 'STOP_RECORDING':
-    case 'PAUSE_RECORDING':
-    case 'START_VERIFICATION':
-    case 'STOP_VERIFICATION':
-    case 'START_HOVER_CAPTURE':
-    case 'STOP_HOVER_CAPTURE': {
+    case 'START_RECORDING': {
       if (!targetTabId) {
         sendResponse({ ok: false, error: 'No target tab' });
         break;
       }
+
+      // ── Lock to this tab so switching tabs doesn't break recording ──
+      recordingState.isRecording = true;
+      recordingState.isPaused = false;
+      recordingState.lockedTabId = targetTabId;
+      persistWindowState();
+
       ensureContentScript(targetTabId)
         .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
         .catch(() => {});
       sendResponse({ ok: true });
       return true;
+    }
+
+    case 'STOP_RECORDING': {
+      // ── Unlock the tab when recording stops ──
+      recordingState.isRecording = false;
+      recordingState.isPaused = false;
+      recordingState.isVerification = false;
+      recordingState.isHoverCapture = false;
+      recordingState.lockedTabId = null;
+      persistWindowState();
+
+      if (targetTabId) {
+        chrome.tabs.sendMessage(targetTabId, { type: msg.type }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+      break;
+    }
+
+    case 'PAUSE_RECORDING': {
+      recordingState.isPaused = true;
+      persistWindowState();
+
+      if (targetTabId) {
+        ensureContentScript(targetTabId)
+          .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
+          .catch(() => {});
+      }
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    case 'START_VERIFICATION': {
+      recordingState.isVerification = true;
+      persistWindowState();
+
+      if (targetTabId) {
+        ensureContentScript(targetTabId)
+          .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
+          .catch(() => {});
+      }
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    case 'STOP_VERIFICATION': {
+      recordingState.isVerification = false;
+      persistWindowState();
+
+      if (targetTabId) {
+        chrome.tabs.sendMessage(targetTabId, { type: msg.type }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+      break;
+    }
+
+    case 'START_HOVER_CAPTURE': {
+      recordingState.isHoverCapture = true;
+      persistWindowState();
+
+      if (targetTabId) {
+        ensureContentScript(targetTabId)
+          .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
+          .catch(() => {});
+      }
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    case 'STOP_HOVER_CAPTURE': {
+      recordingState.isHoverCapture = false;
+      persistWindowState();
+
+      if (targetTabId) {
+        chrome.tabs.sendMessage(targetTabId, { type: msg.type }).catch(() => {});
+      }
+      sendResponse({ ok: true });
+      break;
     }
 
     // Popup asks: who is the current target tab?
@@ -282,7 +439,7 @@ async function ensureContentScript(tabId) {
       url === '' // new tab page before URL loads
     ) {
       throw new Error(
-        `Cannot inject scripts on restricted page: ${url || '(new tab)'}.\nNavigate to a regular website first.`
+        `Cannot inject scripts on restricted page: ${url || '(new tab)'}.\\nNavigate to a regular website first.`
       );
     }
 

@@ -135,8 +135,12 @@ chrome.runtime.onMessage.addListener((msg) => {
     state.isHoverCaptureMode = false;
     render();
   } else if (msg.type === 'TARGET_TAB_CHANGED') {
+    const tabActuallyChanged = state.targetTabId !== msg.tabId;
     state.targetTabId = msg.tabId;
-    if (state.isRecording && !state.isPaused) {
+    // Only re-send recording commands if the actual target tab switched.
+    // Same-tab navigations (refreshes, SPA routes) are handled by the
+    // service worker's auto re-injection — no need to double-send.
+    if (tabActuallyChanged && state.isRecording && !state.isPaused) {
       chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId });
       if (state.isVerificationMode) {
         setTimeout(() => chrome.runtime.sendMessage({ type: 'START_VERIFICATION' }).catch(() => {}), 100);
