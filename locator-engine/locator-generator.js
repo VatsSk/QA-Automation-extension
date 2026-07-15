@@ -198,7 +198,7 @@
 
     _generateNameLocators(el, candidates) {
       const tag = el.tagName.toLowerCase();
-      const name = el.name;
+      const name = el.getAttribute('name');
       
       // Try name alone
       let sel = `${tag}[name="${escapeAttr(name)}"]`;

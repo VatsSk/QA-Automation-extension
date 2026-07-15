@@ -343,19 +343,24 @@
       const el = e.target;
       if (el === highlight || el === tooltip || el === banner) return;
       
-      if (window.LocatorGenerator) {
-        const loc = window.LocatorGenerator.generate(el);
-        const info = window.LocatorGenerator.getElementInfo(el);
-        const data = {
-          tag: info.tag,
-          id: info.id,
-          cssSelector: loc.bestLocator,
-          customLocator: loc.locators.custom || '',
-          attributes: { type: info.type },
-          text: info.textContent || '',
-          value: info.value || ''
-        };
-        document.dispatchEvent(new CustomEvent('qa-element-captured', { detail: data }));
+      try {
+        if (window.LocatorGenerator) {
+          const loc = window.LocatorGenerator.generate(el);
+          const info = window.LocatorGenerator.getElementInfo(el);
+          const customLoc = loc.locators.find(l => ['data-testid', 'data-test', 'data-cy', 'data-qa'].includes(l.type))?.value || '';
+          const data = {
+            tag: info.tag,
+            id: info.id,
+            cssSelector: loc.bestLocator,
+            customLocator: customLoc,
+            attributes: { type: info.type },
+            text: info.textContent || '',
+            value: info.value || ''
+          };
+          document.dispatchEvent(new CustomEvent('qa-element-captured', { detail: data }));
+        }
+      } catch (err) {
+        console.error('[QA] Smart extraction failed:', err);
       }
       return;
     }
@@ -438,26 +443,29 @@
 
     const result = {};
 
-    if ((captureMode === 'LOCATOR' || captureMode === 'BOTH') && window.LocatorGenerator) {
-      const loc = window.LocatorGenerator.generate(el);
-      result.locator = loc.bestLocator;
-      result.confidence = loc.confidence;
-      result.allLocators = loc.locators;
+    try {
+      if ((captureMode === 'LOCATOR' || captureMode === 'BOTH') && window.LocatorGenerator) {
+        const loc = window.LocatorGenerator.generate(el);
+        result.locator = loc.bestLocator;
+        result.confidence = loc.confidence;
+        result.allLocators = loc.locators;
+      }
+
+      if ((captureMode === 'VALUE' || captureMode === 'BOTH') && window.LocatorGenerator) {
+        result.value = window.LocatorGenerator.extractValue(el);
+      }
+
+      // Full element info always
+      if (window.LocatorGenerator) {
+        result.elementInfo = window.LocatorGenerator.getElementInfo(el);
+      }
+    } catch (err) {
+      console.error('[QA] Extraction failed:', err);
+    } finally {
+      const cb = captureCallback;
+      cleanup();
+      if (cb) cb(captureMode, result);
     }
-
-    if ((captureMode === 'VALUE' || captureMode === 'BOTH') && window.LocatorGenerator) {
-      result.value = window.LocatorGenerator.extractValue(el);
-    }
-
-    // Full element info always
-    if (window.LocatorGenerator) {
-      result.elementInfo = window.LocatorGenerator.getElementInfo(el);
-    }
-
-    const cb = captureCallback;
-    cleanup();
-
-    if (cb) cb(captureMode, result);
   }
 
   function onKeyDown(e) {
