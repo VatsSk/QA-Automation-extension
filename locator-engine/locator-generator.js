@@ -333,14 +333,26 @@
           : (el.closest ? el.closest('[id^="select2-"][id$="-container"]') : null);
           
       if (container && container.id) {
-         const xpath = `//${container.tagName.toLowerCase()}[@id="${container.id}"]`;
-         if (isUniqueXPath(xpath)) {
-           candidates.push({ 
-             type: 'Select2 ID', 
-             value: xpath, 
-             score: 100, 
-             note: 'Select2 container ID' 
-           });
+         if (el === container) {
+           const xpath = `//${container.tagName.toLowerCase()}[@id="${container.id}"]`;
+           if (isUniqueXPath(xpath)) {
+             candidates.push({ 
+               type: 'Select2 ID', 
+               value: xpath, 
+               score: 100, 
+               note: 'Select2 container ID' 
+             });
+           }
+         } else {
+           const relativeXPath = this._buildRelativeXPath(container, el);
+           if (isUniqueXPath(relativeXPath)) {
+             candidates.push({ 
+               type: 'Select2 Child', 
+               value: relativeXPath, 
+               score: 100, 
+               note: 'Select2 exact child element' 
+             });
+           }
          }
          
          // Try to find original select element
@@ -348,12 +360,14 @@
          if (match && match[1] && document.getElementById(match[1])) {
             const anchorXPath = `//select[@id="${match[1]}"]/following-sibling::span//span[contains(@class,"select2-selection__rendered")]`;
             if (isUniqueXPath(anchorXPath)) {
-              candidates.push({ 
-                type: 'Select2 Anchor', 
-                value: anchorXPath, 
-                score: 90, 
-                note: 'Anchored to original select' 
-              });
+              if (el === container) {
+                candidates.push({ 
+                  type: 'Select2 Anchor', 
+                  value: anchorXPath, 
+                  score: 90, 
+                  note: 'Anchored to original select' 
+                });
+              }
             }
          }
       }
@@ -488,6 +502,14 @@
           }
         }
 
+        // NEW: If combinations failed, but parent is stable, generate exact relative path
+        if ((parent.id && isStableId(parent.id)) || parentClasses.length > 0) {
+          const relativeCss = this._buildRelativeCss(parent, el);
+          if (isUniqueCss(relativeCss)) {
+            return relativeCss;
+          }
+        }
+
         parent = parent.parentElement;
         depth++;
       }
@@ -507,14 +529,22 @@
       // Try removing unnecessary parts
       const removable = ['div', 'span', 'tbody', 'tr'];
 
-      for (let i = 0; i < parts.length; i++) {
-        const tag = parts[i].split(/[.#\[]/)[0];
+      // Do not remove the last part because it defines the target element itself
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        if (part === '>') continue; // Skip combinators
+
+        const tag = part.split(/[.#\[]/)[0];
         
         if (removable.includes(tag)) {
           // Try removing this part
           const newParts = [...parts];
           newParts.splice(i, 1);
-          const newSelector = newParts.join(' ');
+          
+          // Clean up dangling combinators (e.g. '>', '+') that might be left over
+          if (newParts[0] === '>') newParts.shift();
+          let newSelector = newParts.join(' ');
+          newSelector = newSelector.replace(/\s*>\s*>\s*/g, ' > ');
           
           if (isUniqueCss(newSelector)) {
             current = newSelector;
@@ -601,12 +631,16 @@
 
       while (parent && parent !== document.body && depth < maxDepth) {
         let parentXpath = `//${parent.tagName.toLowerCase()}`;
+        let isStableParent = false;
+
         if (parent.id && isStableId(parent.id)) {
           parentXpath += `[@id="${escapeAttr(parent.id)}"]`;
+          isStableParent = true;
         } else {
           const pClasses = getStableClasses(parent);
           if (pClasses.length > 0) {
             parentXpath += `[contains(@class,'${escapeAttr(pClasses[0])}')]`;
+            isStableParent = true;
           }
         }
 
@@ -614,6 +648,14 @@
           // Combine //parent... with //child... -> //parent...//child...
           const combined = parentXpath + childXPath;
           if (isUniqueXPath(combined)) return combined;
+        }
+
+        // NEW: If simple descendant combination wasn't unique, try exact relative path
+        if (isStableParent) {
+          const relativeXPath = this._buildRelativeXPath(parent, el);
+          if (isUniqueXPath(relativeXPath)) {
+            return relativeXPath;
+          }
         }
 
         parent = parent.parentElement;
@@ -688,6 +730,106 @@
       }
     },
 
+    _buildRelativeCss(ancestor, child) {
+      const parts = [];
+      let node = child;
+
+      while (node && node !== ancestor && node !== document.body) {
+        const tag = node.tagName.toLowerCase();
+        let selector = tag;
+        
+        const stableClasses = getStableClasses(node);
+        const siblings = Array.from(node.parentElement.children);
+        const sameTagSiblings = siblings.filter(s => s.tagName === node.tagName);
+        
+        if (sameTagSiblings.length > 1) {
+           let classUnique = false;
+           if (stableClasses.length > 0) {
+              const testClass = stableClasses[0];
+              const matchingSiblings = siblings.filter(s => 
+                  s.tagName === node.tagName && s.classList.contains(testClass)
+              );
+              if (matchingSiblings.length === 1) {
+                  selector = `${tag}.${CSS.escape(testClass)}`;
+                  classUnique = true;
+              }
+           }
+           
+           if (!classUnique) {
+              const idx = sameTagSiblings.indexOf(node) + 1;
+              selector = `${tag}:nth-of-type(${idx})`;
+           }
+        } else if (stableClasses.length > 0) {
+           selector = `${tag}.${CSS.escape(stableClasses[0])}`;
+        }
+
+        parts.unshift(selector);
+        node = node.parentElement;
+      }
+
+      let ancestorSel = ancestor.tagName.toLowerCase();
+      if (ancestor.id && isStableId(ancestor.id)) {
+        ancestorSel = `#${CSS.escape(ancestor.id)}`;
+      } else {
+        const aClasses = getStableClasses(ancestor);
+        if (aClasses.length > 0) {
+          ancestorSel += `.${CSS.escape(aClasses[0])}`;
+        }
+      }
+
+      return `${ancestorSel} > ${parts.join(' > ')}`;
+    },
+
+    _buildRelativeXPath(ancestor, child) {
+      const parts = [];
+      let node = child;
+
+      while (node && node !== ancestor && node !== document.body) {
+        const tag = node.tagName.toLowerCase();
+        let selector = tag;
+
+        const stableClasses = getStableClasses(node);
+        const siblings = Array.from(node.parentElement.children);
+        const sameTagSiblings = siblings.filter(s => s.tagName === node.tagName);
+
+        if (sameTagSiblings.length > 1) {
+           let classUnique = false;
+           if (stableClasses.length > 0) {
+              const testClass = stableClasses[0];
+              const matchingSiblings = siblings.filter(s => 
+                  s.tagName === node.tagName && s.classList.contains(testClass)
+              );
+              if (matchingSiblings.length === 1) {
+                  selector = `${tag}[contains(@class,'${escapeAttr(testClass)}')]`;
+                  classUnique = true;
+              }
+           }
+           
+           if (!classUnique) {
+              const idx = sameTagSiblings.indexOf(node) + 1;
+              selector = `${tag}[${idx}]`;
+           }
+        } else if (stableClasses.length > 0) {
+           selector = `${tag}[contains(@class,'${escapeAttr(stableClasses[0])}')]`;
+        }
+
+        parts.unshift(selector);
+        node = node.parentElement;
+      }
+
+      let ancestorSel = `//${ancestor.tagName.toLowerCase()}`;
+      if (ancestor.id && isStableId(ancestor.id)) {
+        ancestorSel += `[@id="${escapeAttr(ancestor.id)}"]`;
+      } else {
+        const aClasses = getStableClasses(ancestor);
+        if (aClasses.length > 0) {
+          ancestorSel += `[contains(@class,'${escapeAttr(aClasses[0])}')]`;
+        }
+      }
+
+      return `${ancestorSel}/${parts.join('/')}`;
+    },
+
     _buildFullDomPath(el) {
       const parts = [];
       let node = el;
@@ -725,7 +867,19 @@
 
     // Extract visible text shown to the user — used for verification value only
     extractValue(el) {
-      return (el.innerText || el.textContent || '').trim();
+      let val = el.innerText || el.textContent || '';
+      
+      // Fix for Select2: Selenium's getText() inserts a space after the clear button (×)
+      // because of its CSS layout, whereas Chrome's innerText sometimes concatenates them (×pinku).
+      const clearBtn = el.querySelector?.('.select2-selection__clear');
+      if (clearBtn) {
+        const clearText = (clearBtn.innerText || clearBtn.textContent || '').trim() || '×';
+        if (val.startsWith(clearText) && !val.startsWith(clearText + ' ')) {
+          val = clearText + ' ' + val.slice(clearText.length);
+        }
+      }
+      
+      return val.trim();
     },
 
     // Full info dump for hover tooltip
