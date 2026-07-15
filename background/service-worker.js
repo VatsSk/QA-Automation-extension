@@ -396,6 +396,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       break;
     }
+    
+    case 'TOGGLE_HOVER_MODE_OFF': {
+      recordingState.isHoverCapture = false;
+      persistWindowState();
+      notifyPopup(msg);
+      sendResponse({ ok: true });
+      break;
+    }
+
+    case 'TOGGLE_VERIFICATION_MODE': {
+      recordingState.isVerification = false;
+      persistWindowState();
+      notifyPopup(msg);
+      sendResponse({ ok: true });
+      break;
+    }
 
 
     // Content script requests focus back on the recorder window after capture
