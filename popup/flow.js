@@ -465,7 +465,9 @@ function addVerificationStep(elData) {
   const verType = getSuggestedVerification(elData);
   let expectedValue = '';
   if (verType === 'Text Equals') {
-    expectedValue = elData.text || elData.value || '';
+    // Prefer elData.value (innerText) over elData.text (textContent) 
+    // because Selenium's getText() respects layout and spaces like innerText.
+    expectedValue = elData.value || elData.text || '';
   } else if (['Value', 'Selected Value', 'Image Source', 'Alt Text'].includes(verType)) {
     expectedValue = elData.value || elData.text || '';
   }
