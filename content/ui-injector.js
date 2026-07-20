@@ -35,6 +35,17 @@
   container.style.pointerEvents = 'auto';
   container.style.borderLeft = '1px solid rgba(99, 102, 241, 0.2)';
 
+  // Full-screen transparent backdrop to capture "click outside" and prevent page interaction
+  var backdrop = document.createElement('div');
+  backdrop.id = 'qa-ext-backdrop';
+  backdrop.style.position = 'fixed';
+  backdrop.style.top = '0';
+  backdrop.style.left = '0';
+  backdrop.style.width = '100vw';
+  backdrop.style.height = '100vh';
+  backdrop.style.zIndex = String(Z_BASE - 1);
+  backdrop.style.background = 'transparent';
+
   // Iframe (loads flow.html from extension)
   var iframe = document.createElement('iframe');
   iframe.id = 'qa-ext-iframe';
@@ -91,19 +102,21 @@
     }
     iframe.src = chrome.runtime.getURL('popup/flow.html?tabId=' + tabId);
 
+    document.documentElement.appendChild(backdrop);
     document.documentElement.appendChild(container);
     document.documentElement.appendChild(fab);
     document.documentElement.appendChild(indicator);
 
     restoreUIState();
 
-    document.addEventListener('mousedown', onClickOutside, true);
+    document.addEventListener('click', onClickOutside, true);
     document.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('message', onIframeMessage);
   }
 
   function minimize() {
     isMinimized = true;
+    backdrop.style.display = 'none';
     container.style.transform = 'translateX(' + (IFRAME_WIDTH + 20) + 'px)';
     fab.style.display = 'flex';
     indicator.style.right = '16px';
@@ -112,18 +125,21 @@
 
   function restore() {
     isMinimized = false;
+    backdrop.style.display = 'block';
     container.style.transform = 'translateX(0)';
     fab.style.display = 'none';
     indicator.style.right = (IFRAME_WIDTH + 16) + 'px';
     persistUIState();
+    showShortcutFeedback('RESTORE'); // Show message when opened
   }
 
   function destroyUI() {
     isMinimized = false;
+    if (backdrop.parentNode) backdrop.remove();
     if (container.parentNode) container.remove();
     if (fab.parentNode) fab.remove();
     if (indicator.parentNode) indicator.remove();
-    document.removeEventListener('mousedown', onClickOutside, true);
+    document.removeEventListener('click', onClickOutside, true);
     document.removeEventListener('keydown', onKeyDown, true);
     window.removeEventListener('message', onIframeMessage);
     window.__qaUIInjectorLoaded = false;
@@ -188,6 +204,8 @@
       var saved = data[key];
       if (saved && saved.isMinimized) {
         minimize();
+      } else {
+        restore();
       }
     }).catch(function () {});
   }
@@ -197,6 +215,12 @@
   function onClickOutside(e) {
     if (isMinimized) return;
     if (container.contains(e.target) || fab.contains(e.target) || indicator.contains(e.target)) return;
+    
+    // Intercept click on the backdrop
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    
     minimize();
   }
 
@@ -232,7 +256,8 @@
     var labels = {
       'TOGGLE_HOVER': '\ud83d\udd90 Hover Mode',
       'TOGGLE_PAUSE': '\u23f8 Play/Pause',
-      'TOGGLE_VERIFICATION': '\ud83d\udd0d Verification Mode'
+      'TOGGLE_VERIFICATION': '\ud83d\udd0d Verification Mode',
+      'RESTORE': 'Click outside to close the extension'
     };
 
     var toast = document.createElement('div');
@@ -258,16 +283,18 @@
     toast.textContent = labels[action] || action;
     document.documentElement.appendChild(toast);
 
-    requestAnimationFrame(function () {
+    // Use setTimeout instead of requestAnimationFrame for better reliability
+    setTimeout(function () {
       toast.style.opacity = '1';
       toast.style.transform = 'translate(-50%, -50%) scale(1)';
-    });
+    }, 10);
 
+    var duration = action === 'RESTORE' ? 3000 : 900;
     setTimeout(function () {
       toast.style.opacity = '0';
       toast.style.transform = 'translate(-50%, -50%) scale(0.9)';
       setTimeout(function () { if (toast.parentNode) toast.remove(); }, 250);
-    }, 900);
+    }, duration);
   }
 
   function sendToIframe(msg) {

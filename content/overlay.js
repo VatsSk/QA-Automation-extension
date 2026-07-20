@@ -288,6 +288,9 @@
       targetClass: e.target.className,
       targetId: e.target.id
     });
+
+    // Ignore clicks on the extension's own injected UI (overlay, backdrop, etc.)
+    if (e.target && typeof e.target.id === 'string' && e.target.id.startsWith('qa-ext-')) return;
     
     if (!smartRecording || smartPaused) return;
     if (!e.isTrusted) return;
