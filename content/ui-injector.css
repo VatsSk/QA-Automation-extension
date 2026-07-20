@@ -1,0 +1,15 @@
+/* content/ui-injector.css */
+/* Animations and hover states for QA extension in-tab overlay */
+
+@keyframes qa-fab-pulse {
+  0%, 100% { box-shadow: 0 4px 16px rgba(99, 102, 241, 0.5); }
+  50% { box-shadow: 0 4px 28px rgba(99, 102, 241, 0.8); }
+}
+
+#qa-ext-restore-fab {
+  animation: qa-fab-pulse 2s ease-in-out infinite;
+}
+
+#qa-ext-overlay {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}

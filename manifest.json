@@ -37,8 +37,9 @@
   "web_accessible_resources": [
     {
       "resources": ["popup/popup.html", "popup/popup.css", "popup/popup.js",
+                    "popup/flow.html", "popup/flow.css", "popup/flow.js",
                     "scenario-builder/schema.js", "storage/storage.js",
-                    "api/api-client.js", "assets/*.png"],
+                    "api/api-client.js", "content/ui-injector.css", "assets/*.png"],
       "matches": ["<all_urls>"]
     }
   ],

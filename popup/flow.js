@@ -107,6 +107,9 @@ async function loadSession() {
 let messageCounter = 0;
 
 chrome.runtime.onMessage.addListener((msg) => {
+  // Filter: only process messages meant for this tab's UI
+  if (msg._targetTabId && msg._targetTabId !== state.targetTabId) return;
+
   if (msg.type === 'STEP_RECORDED') {
     messageCounter++;
     console.log(`[Flow] Message #${messageCounter} - Received STEP_RECORDED:`, {
@@ -164,8 +167,23 @@ document.addEventListener('keydown', (e) => {
     if (_captureInsertIndex !== null) { exitInsertMode(); return; }
     if (state.isVerificationMode) { toggleVerificationMode(); return; }
   }
-  if (e.ctrlKey && e.key.toLowerCase() === 'v') {
+  if (e.altKey && e.shiftKey && e.key.toLowerCase() === 'q') {
+    e.preventDefault();
     toggleVerificationMode();
+  }
+});
+
+// Listen for shortcut commands from the parent ui-injector overlay
+window.addEventListener('message', (e) => {
+  if (!e.data || e.data.type !== 'QA_SHORTCUT') return;
+  switch (e.data.action) {
+    case 'TOGGLE_VERIFICATION': toggleVerificationMode(); break;
+    case 'TOGGLE_HOVER': toggleHoverCaptureMode(); break;
+    case 'TOGGLE_PAUSE': 
+      if (state.isRecording) {
+        state.isPaused ? resumeRecording() : pauseRecording();
+      }
+      break;
   }
 });
 
@@ -188,6 +206,22 @@ function toggleHoverCaptureMode() {
     }).catch(() => {});
   }
   render();
+}
+
+// Notify the parent ui-injector overlay about mode changes for the floating indicator
+function notifyParentModes() {
+  if (window.parent === window) return; // not in iframe
+  try {
+    window.parent.postMessage({
+      type: 'QA_MODE_CHANGE',
+      modes: {
+        recording: state.isRecording,
+        paused: state.isPaused,
+        verification: state.isVerificationMode,
+        hover: state.isHoverCaptureMode
+      }
+    }, '*');
+  } catch (_) {}
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -583,6 +617,9 @@ function render() {
   } else {
     els.hoverBanner.classList.add('hidden');
   }
+
+  // Notify parent overlay about mode state for floating indicator
+  notifyParentModes();
 }
 
 function getStepConfig(type) {
@@ -853,7 +890,11 @@ function bindGlobalEvents() {
         await ApiClient.saveFlowDraft({ authToken: state.authToken, payload });
       }
       clearLocalDraft();  // wipe local draft after successful API save
-      window.close();
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'QA_CLOSE' }, '*');
+      } else {
+        window.close();
+      }
     } catch (err) {
       showToast('Failed to save flow: ' + err.message);
       els.btnFinish.disabled = false;
@@ -868,7 +909,11 @@ function bindGlobalEvents() {
       undoStack = [];
       redoStack = [];
       stopRecording();
-      window.close();
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'QA_CLOSE' }, '*');
+      } else {
+        window.close();
+      }
     });
   });
 

@@ -1,11 +1,9 @@
 // ─── service-worker.js ──────────────────────────────────────────────────────
-// Manages the persistent detached recorder window and acts as a message bus
-// between that window and content scripts injected on target tabs.
+// Acts as a message bus between the in-tab UI overlay (iframe) and content
+// scripts injected on target tabs.
 
-let recorderWindowId = null;   // ID of the detached recorder window
 let targetTabId = null;         // The tab the user is recording against
-let popupTabId = null;          // The tab inside the recorder window
-let isCreatingWindow = false;   // Guard against onActivated race during window creation
+let uiInjectedTabs = new Set(); // Tracks which tabs have the UI overlay
 
 // ── Recording state tracked in the SW so we can auto-reinject after navigation ─
 let recordingState = {
@@ -16,130 +14,108 @@ let recordingState = {
   lockedTabId: null    // When recording, we lock to this specific tab
 };
 
-// ── Persist / restore window IDs across service-worker restarts ──────────────
+// ── Persist / restore state across service-worker restarts ───────────────────
 // MV3 service workers are ephemeral — Chrome can terminate them at any time.
-// We persist recorderWindowId & popupTabId in chrome.storage.session so that
-// a restarted service worker can re-adopt an already-open recorder window
-// instead of creating a duplicate.
 async function persistWindowState() {
-  await chrome.storage.session.set({ recorderWindowId, popupTabId, targetTabId, recordingState });
+  await chrome.storage.session.set({ targetTabId, recordingState, uiTabs: Array.from(uiInjectedTabs) });
 }
 
 async function restoreWindowState() {
-  const s = await chrome.storage.session.get(['recorderWindowId', 'popupTabId', 'targetTabId', 'recordingState']);
-  if (s.recorderWindowId) recorderWindowId = s.recorderWindowId;
-  if (s.popupTabId) popupTabId = s.popupTabId;
+  const s = await chrome.storage.session.get(['targetTabId', 'recordingState', 'uiTabs']);
   if (s.targetTabId) targetTabId = s.targetTabId;
   if (s.recordingState) recordingState = s.recordingState;
+  if (s.uiTabs) uiInjectedTabs = new Set(s.uiTabs);
 }
 
-async function clearWindowState() {
-  recorderWindowId = null;
-  popupTabId = null;
-  await chrome.storage.session.remove(['recorderWindowId', 'popupTabId']);
+async function clearTabUI(tabId) {
+  uiInjectedTabs.delete(tabId);
+  await chrome.storage.session.remove('qa_ui_' + tabId);
+  await persistWindowState();
 }
 
-// ── Verify that the in-memory / restored window is still alive ───────────────
-async function isRecorderWindowAlive() {
-  if (recorderWindowId === null) return false;
-  try {
-    await chrome.windows.get(recorderWindowId);
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-// ── Open / focus the recorder window when the toolbar icon is clicked ────────
+// ── Inject overlay UI into the tab when the toolbar icon is clicked ──────────
 chrome.action.onClicked.addListener(async (tab) => {
-  if (isCreatingWindow) return;
-
-  // Restore persisted state in case the service worker was restarted
   await restoreWindowState();
 
-  if (await isRecorderWindowAlive()) {
-    // Window is already open — just focus it
-    // Do NOT change targetTabId if we are locked to a specific tab (recording in progress)
+  // Check if UI is already injected in this tab
+  if (uiInjectedTabs.has(tab.id)) {
     try {
-      await chrome.windows.update(recorderWindowId, { focused: true });
-      if (!recordingState.lockedTabId) {
-        // Not locked — safe to switch target to the clicked tab
-        targetTabId = tab.id;
-        await persistWindowState();
-        notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId: targetTabId });
+      const res = await chrome.tabs.sendMessage(tab.id, { type: 'PING_UI' });
+      if (res?.alive) {
+        // UI already injected — toggle minimize/restore
+        chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_UI' });
+        return;
       }
-      // If locked, we just focus the window without changing the target
-      return;
     } catch (_) {
-      await clearWindowState();
+      uiInjectedTabs.delete(tab.id);
     }
   }
 
-  // Save the real target tab before async window creation
-  const savedTargetTabId = tab.id;
-  targetTabId = tab.id;
-  isCreatingWindow = true;
+  // Guard: check URL is injectable
+  const url = tab.url || '';
+  if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
+      url.startsWith('about:') || url.startsWith('edge://') ||
+      url.startsWith('devtools://') || url === '') {
+    return; // Can't inject on restricted pages
+  }
 
-  // Create a new detached window — NOT a popup, so it stays open
-  const saved = await chrome.storage.local.get(['winW', 'winH', 'mode']);
-  const currentMode = saved.mode || 'FLOW';
-  const htmlFile = currentMode === 'FLOW' ? 'popup/flow.html' : 'popup/popup.html';
-  const win = await chrome.windows.create({
-    url: chrome.runtime.getURL(
-      `${htmlFile}?tabId=${tab.id}&windowId=SELF`
-    ),
-    type: 'popup',   // 'popup' opens a clean detached window without tabs
-    width:  saved.winW || 720,
-    height: saved.winH || 820,
-    focused: true
+  targetTabId = tab.id;
+
+  // Inject content scripts first (overlay, locator, content)
+  await ensureContentScript(tab.id);
+
+  // Set tabId for ui-injector before it loads
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (tid) => { window.__qaTargetTabId = tid; },
+    args: [tab.id]
   });
 
-  recorderWindowId = win.id;
-  // The single tab in our new window
-  popupTabId = win.tabs?.[0]?.id ?? null;
+  // Inject UI overlay CSS + JS
+  await chrome.scripting.insertCSS({
+    target: { tabId: tab.id },
+    files: ['content/ui-injector.css']
+  }).catch(e => console.warn('[SW] UI CSS inject failed:', e.message));
 
-  // Restore targetTabId — onActivated may have overwritten it during await
-  targetTabId = savedTargetTabId;
-  isCreatingWindow = false;
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ['content/ui-injector.js']
+  });
 
-  // Persist so future SW wake-ups can re-adopt this window
+  uiInjectedTabs.add(tab.id);
   await persistWindowState();
 });
 
-// ── Track when our recorder window is closed ─────────────────────────────────
-chrome.windows.onRemoved.addListener((windowId) => {
-  if (windowId === recorderWindowId) {
-    // Reset recording state when popup window is closed
-    recordingState = {
-      isRecording: false,
-      isPaused: false,
-      isVerification: false,
-      isHoverCapture: false,
-      lockedTabId: null
-    };
-    clearWindowState();
+// ── Track when a tab with our UI is closed ────────────────────────────────────
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (uiInjectedTabs.has(tabId)) {
+    uiInjectedTabs.delete(tabId);
+    if (tabId === targetTabId) {
+      recordingState = {
+        isRecording: false,
+        isPaused: false,
+        isVerification: false,
+        isHoverCapture: false,
+        lockedTabId: null
+      };
+      targetTabId = null;
+    }
+    persistWindowState();
   }
 });
 
-// ── Track the active tab so the popup always knows which page to record ──────
+// ── Track the active tab ─────────────────────────────────────────────────────
 chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
-  // Ignore activation events from our own recorder window
-  if (windowId === recorderWindowId) return;
-  // Ignore activations triggered by window creation (recorderWindowId not yet set)
-  if (isCreatingWindow) return;
-
-  // Restore state in case SW restarted
   await restoreWindowState();
 
-  // ── Tab Lock: If recording is active and locked to a specific tab, do NOT switch ──
-  if (recordingState.lockedTabId) {
-    // Don't change targetTabId — recording stays on the locked tab
-    return;
-  }
+  // Tab Lock: If recording is active and locked to a specific tab, do NOT switch
+  if (recordingState.lockedTabId) return;
+
+  // Don't change target unless the activated tab has our UI
+  if (!uiInjectedTabs.has(tabId)) return;
 
   targetTabId = tabId;
   await persistWindowState();
-  notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId });
 });
 
 // ── Re-inject content scripts after page navigation ──────────────────────────
@@ -150,9 +126,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (tabId !== targetTabId) return;
 
   if (changeInfo.status === 'complete') {
-    // Always notify popup about tab update (URL change, title change, etc.)
-    notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId, url: tab.url, title: tab.title });
-
     // ── Auto re-inject if recording was active ────────────────────────────
     // Page navigation destroys all injected scripts. We must re-inject them
     // and restore the recording state so the user doesn't notice any interruption.
@@ -185,9 +158,28 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         console.warn('[SW] Failed to re-inject after navigation:', err.message);
       }
     }
-  } else if (changeInfo.url) {
-    // URL changed but page hasn't finished loading yet — just notify popup
-    notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId, url: tab.url, title: tab.title });
+
+    // ── Re-inject UI overlay if this tab had it ──────────────────────────
+    if (uiInjectedTabs.has(tabId)) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: (tid) => { window.__qaTargetTabId = tid; },
+          args: [tabId]
+        });
+        await chrome.scripting.insertCSS({
+          target: { tabId },
+          files: ['content/ui-injector.css']
+        }).catch(() => {});
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: ['content/ui-injector.js']
+        });
+        console.log('[SW] UI overlay re-injected after navigation.');
+      } catch (err) {
+        console.warn('[SW] Failed to re-inject UI after navigation:', err.message);
+      }
+    }
   }
 });
 
@@ -218,7 +210,14 @@ chrome.runtime.onMessageExternal.addListener(
           notifyPopup({ type: 'RELOAD_SESSION' });
         });
 
-        sendResponse({ success: true });
+          // Tell Chrome to spawn a brand new window with extensions enabled!
+        chrome.windows.create({
+            type: "normal", // This is the most important part! It forces the full browser UI.
+            url: msg.url,
+            focused: true
+        });
+ 
+        sendResponse({ success: true, message: "Window opened by extension" });
         break;
     }
 
@@ -414,10 +413,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
 
-    // Content script requests focus back on the recorder window after capture
+    // Content script requests focus back on the recorder — restore overlay if minimized
     case 'FOCUS_RECORDER': {
-      if (recorderWindowId) {
-        chrome.windows.update(recorderWindowId, { focused: true }).catch(() => {});
+      if (targetTabId) {
+        chrome.tabs.sendMessage(targetTabId, { type: 'FOCUS_RECORDER' }).catch(() => {});
       }
       break;
     }
@@ -507,6 +506,7 @@ async function ensureContentScript(tabId) {
 }
 
 function notifyPopup(msg) {
-  if (!popupTabId) return;
-  chrome.tabs.sendMessage(popupTabId, msg).catch(() => {});
+  if (!targetTabId) return;
+  msg._targetTabId = targetTabId;
+  chrome.runtime.sendMessage(msg).catch(() => {});
 }
