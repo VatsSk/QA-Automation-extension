@@ -175,11 +175,30 @@
     // The strict 400ms debounce inside onSmartClick will safely ignore the redundant click.
     document.addEventListener('mousedown', onSmartClick, true);
     document.addEventListener('click', onSmartClick, true);
+    document.addEventListener('keydown', onSmartKeyDown, true);
   }
 
   function unbindSmartListeners() {
     document.removeEventListener('mousedown', onSmartClick, true);
     document.removeEventListener('click', onSmartClick, true);
+    document.removeEventListener('keydown', onSmartKeyDown, true);
+  }
+
+  function onSmartKeyDown(e) {
+    if (!smartRecording) return;
+    
+    // Escape = Exit Verification/Hover modes
+    if (e.key === 'Escape') {
+      if (smartVerification) {
+        e.preventDefault();
+        console.log('[QA] Shortcut detected: Escape -> TOGGLE_VERIFICATION_MODE');
+        document.dispatchEvent(new CustomEvent('qa-ext-shortcut', { detail: 'TOGGLE_VERIFICATION_MODE' }));
+      } else if (smartHoverCapture) {
+        e.preventDefault();
+        console.log('[QA] Shortcut detected: Escape -> TOGGLE_HOVER_MODE');
+        document.dispatchEvent(new CustomEvent('qa-ext-shortcut', { detail: 'TOGGLE_HOVER_MODE' }));
+      }
+    }
   }
 
   function dispatchSmartStep(action, el, value = '') {

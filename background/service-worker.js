@@ -1,9 +1,13 @@
 // ─── service-worker.js ──────────────────────────────────────────────────────
-// Acts as a message bus between the in-tab UI overlay (iframe) and content
+// Message router and state manager. Coordinates between the Side Panel UI and
 // scripts injected on target tabs.
 
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((error) => console.error('[QA] Side panel config error:', error));
+
 let targetTabId = null;         // The tab the user is recording against
-let uiInjectedTabs = new Set(); // Tracks which tabs have the UI overlay
+let pendingMessages = [];       // Queue for messages received while popup is closed
 
 // ── Recording state tracked in the SW so we can auto-reinject after navigation ─
 let recordingState = {
@@ -17,89 +21,35 @@ let recordingState = {
 // ── Persist / restore state across service-worker restarts ───────────────────
 // MV3 service workers are ephemeral — Chrome can terminate them at any time.
 async function persistWindowState() {
-  await chrome.storage.session.set({ targetTabId, recordingState, uiTabs: Array.from(uiInjectedTabs) });
+  await chrome.storage.session.set({ targetTabId, recordingState });
+}
+
+function updateBadge() {
+  if (pendingMessages.length > 0) {
+    chrome.action.setBadgeText({ text: pendingMessages.length.toString() });
+    chrome.action.setBadgeBackgroundColor({ color: '#ef4444' }); // Red
+  } else {
+    chrome.action.setBadgeText({ text: '' });
+  }
 }
 
 async function restoreWindowState() {
-  const s = await chrome.storage.session.get(['targetTabId', 'recordingState', 'uiTabs']);
+  const s = await chrome.storage.session.get(['targetTabId', 'recordingState']);
   if (s.targetTabId) targetTabId = s.targetTabId;
   if (s.recordingState) recordingState = s.recordingState;
-  if (s.uiTabs) uiInjectedTabs = new Set(s.uiTabs);
 }
 
-async function clearTabUI(tabId) {
-  uiInjectedTabs.delete(tabId);
-  await chrome.storage.session.remove('qa_ui_' + tabId);
-  await persistWindowState();
-}
-
-// ── Inject overlay UI into the tab when the toolbar icon is clicked ──────────
-chrome.action.onClicked.addListener(async (tab) => {
-  await restoreWindowState();
-
-  // Check if UI is already injected in this tab
-  if (uiInjectedTabs.has(tab.id)) {
-    try {
-      const res = await chrome.tabs.sendMessage(tab.id, { type: 'PING_UI' });
-      if (res?.alive) {
-        // UI already injected — toggle minimize/restore
-        chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_UI' });
-        return;
-      }
-    } catch (_) {
-      uiInjectedTabs.delete(tab.id);
-    }
-  }
-
-  // Guard: check URL is injectable
-  const url = tab.url || '';
-  if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
-      url.startsWith('about:') || url.startsWith('edge://') ||
-      url.startsWith('devtools://') || url === '') {
-    return; // Can't inject on restricted pages
-  }
-
-  targetTabId = tab.id;
-
-  // Inject content scripts first (overlay, locator, content)
-  await ensureContentScript(tab.id);
-
-  // Set tabId for ui-injector before it loads
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (tid) => { window.__qaTargetTabId = tid; },
-    args: [tab.id]
-  });
-
-  // Inject UI overlay CSS + JS
-  await chrome.scripting.insertCSS({
-    target: { tabId: tab.id },
-    files: ['content/ui-injector.css']
-  }).catch(e => console.warn('[SW] UI CSS inject failed:', e.message));
-
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files: ['content/ui-injector.js']
-  });
-
-  uiInjectedTabs.add(tab.id);
-  await persistWindowState();
-});
-
-// ── Track when a tab with our UI is closed ────────────────────────────────────
+// Track closed tabs to clear state
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (uiInjectedTabs.has(tabId)) {
-    uiInjectedTabs.delete(tabId);
-    if (tabId === targetTabId) {
-      recordingState = {
-        isRecording: false,
-        isPaused: false,
-        isVerification: false,
-        isHoverCapture: false,
-        lockedTabId: null
-      };
-      targetTabId = null;
-    }
+  if (tabId === targetTabId) {
+    recordingState = {
+      isRecording: false,
+      isPaused: false,
+      isVerification: false,
+      isHoverCapture: false,
+      lockedTabId: null
+    };
+    targetTabId = null;
     persistWindowState();
   }
 });
@@ -111,11 +61,11 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
   // Tab Lock: If recording is active and locked to a specific tab, do NOT switch
   if (recordingState.lockedTabId) return;
 
-  // Don't change target unless the activated tab has our UI
-  if (!uiInjectedTabs.has(tabId)) return;
-
   targetTabId = tabId;
   await persistWindowState();
+
+  // Notify popup that the tab changed, which will trigger a re-injection if it's recording
+  notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId: targetTabId });
 });
 
 // ── Re-inject content scripts after page navigation ──────────────────────────
@@ -157,29 +107,19 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       } catch (err) {
         console.warn('[SW] Failed to re-inject after navigation:', err.message);
       }
-    }
+  }
+}});
 
-    // ── Re-inject UI overlay if this tab had it ──────────────────────────
-    if (uiInjectedTabs.has(tabId)) {
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          func: (tid) => { window.__qaTargetTabId = tid; },
-          args: [tabId]
-        });
-        await chrome.scripting.insertCSS({
-          target: { tabId },
-          files: ['content/ui-injector.css']
-        }).catch(() => {});
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          files: ['content/ui-injector.js']
-        });
-        console.log('[SW] UI overlay re-injected after navigation.');
-      } catch (err) {
-        console.warn('[SW] Failed to re-inject UI after navigation:', err.message);
-      }
-    }
+// ── Listen for Chrome Commands (Global Shortcuts) ──────────────────────────────
+chrome.commands.onCommand.addListener((command) => {
+  console.log('[SW] Command received:', command);
+  let type;
+  if (command === 'toggle-verification') type = 'TOGGLE_VERIFICATION_MODE';
+  else if (command === 'toggle-hover') type = 'TOGGLE_HOVER_MODE';
+  else if (command === 'toggle-pause') type = 'TOGGLE_PAUSE_MODE';
+
+  if (type) {
+    notifyPopup({ type });
   }
 });
 
@@ -265,6 +205,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
     }
 
+    case 'GET_PENDING_MESSAGES': {
+      sendResponse({ messages: pendingMessages });
+      pendingMessages = [];
+      updateBadge();
+      return true;
+    }
+
     case 'PAUSE_RECORDING': {
       recordingState.isPaused = true;
       persistWindowState();
@@ -328,14 +275,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // Popup asks: who is the current target tab?
     case 'POPUP_INIT': {
-      ensureContentScript(targetTabId)
-        .then(() => {
-          sendResponse({ tabId: targetTabId });
-        })
-        .catch((err) => {
-          console.warn('[QA] Initial injection skipped:', err.message);
-          sendResponse({ tabId: targetTabId });
+      if (!targetTabId) {
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+          if (tabs && tabs.length > 0) {
+            targetTabId = tabs[0].id;
+            persistWindowState();
+          }
+          ensureContentScript(targetTabId)
+            .then(() => sendResponse({ tabId: targetTabId }))
+            .catch((err) => {
+              console.warn('[QA] Initial injection skipped:', err?.message);
+              sendResponse({ tabId: targetTabId });
+            });
         });
+      } else {
+        ensureContentScript(targetTabId)
+          .then(() => sendResponse({ tabId: targetTabId }))
+          .catch((err) => {
+            console.warn('[QA] Initial injection skipped:', err?.message);
+            sendResponse({ tabId: targetTabId });
+          });
+      }
       return true; // async
     }
 
@@ -383,7 +343,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Forward step recordings from content script to popup
     case 'STEP_RECORDED': {
       console.log('[SW] Forwarding STEP_RECORDED:', msg.data?.target?.cssSelector);
-      notifyPopup({ type: 'STEP_RECORDED', data: msg.data });
+      notifyPopupAsync({ type: 'STEP_RECORDED', data: msg.data }).then(delivered => {
+        if (!delivered) {
+          pendingMessages.push(msg);
+          updateBadge();
+        }
+      });
       sendResponse({ ok: true });
       break;
     }
@@ -391,7 +356,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Forward element captures from content script to popup
     case 'ELEMENT_CAPTURED': {
       console.log('[SW] Forwarding ELEMENT_CAPTURED:', msg.data?.cssSelector);
-      notifyPopup({ type: 'ELEMENT_CAPTURED', data: msg.data });
+      notifyPopupAsync({ type: 'ELEMENT_CAPTURED', data: msg.data }).then(delivered => {
+        if (!delivered) {
+          pendingMessages.push(msg);
+          updateBadge();
+        }
+      });
       sendResponse({ ok: true });
       break;
     }
@@ -404,9 +374,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       break;
     }
 
-    case 'TOGGLE_VERIFICATION_MODE': {
-      recordingState.isVerification = false;
-      persistWindowState();
+    case 'TOGGLE_VERIFICATION_MODE':
+    case 'TOGGLE_HOVER_MODE':
+    case 'TOGGLE_PAUSE_MODE': {
       notifyPopup(msg);
       sendResponse({ ok: true });
       break;
@@ -505,8 +475,17 @@ async function ensureContentScript(tabId) {
   }
 }
 
-function notifyPopup(msg) {
-  if (!targetTabId) return;
+async function notifyPopupAsync(msg) {
+  if (!targetTabId) return false;
   msg._targetTabId = targetTabId;
-  chrome.runtime.sendMessage(msg).catch(() => {});
+  try {
+    await chrome.runtime.sendMessage(msg);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+function notifyPopup(msg) {
+  notifyPopupAsync(msg).catch(() => {});
 }

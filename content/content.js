@@ -99,4 +99,9 @@
     chrome.runtime.sendMessage({ type: 'ELEMENT_CAPTURED', data: e.detail });
   });
 
+  document.addEventListener('qa-ext-shortcut', (e) => {
+    console.log('[Content] Forwarding shortcut:', e.detail);
+    chrome.runtime.sendMessage({ type: e.detail });
+  });
+
 })();

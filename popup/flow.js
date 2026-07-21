@@ -48,15 +48,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   state.targetTabId = parseInt(params.get('tabId')) || null;
 
   bindGlobalEvents();
-  
-  chrome.runtime.sendMessage({ type: 'POPUP_INIT' }, (res) => {
-    if (res?.tabId && !state.targetTabId) state.targetTabId = res.tabId;
-  });
-
   await loadSession();
 
-  // Start recording immediately
-  startRecording();
+  // Wait for background service to initialize and determine targetTabId
+  await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'POPUP_INIT' }, (res) => {
+      if (res?.tabId && !state.targetTabId) state.targetTabId = res.tabId;
+      resolve();
+    });
+  });
+
+  // Process any messages queued while the popup was closed
+  chrome.runtime.sendMessage({ type: 'GET_PENDING_MESSAGES' }, (res) => {
+    if (res && res.messages) {
+      res.messages.forEach(msg => {
+        handleIncomingMessage(msg);
+      });
+    }
+  });
+
+  // Start recording immediately if we're not already recording
+  if (!state.isRecording) {
+    startRecording();
+  }
   render();
 });
 
@@ -106,7 +120,9 @@ async function loadSession() {
 // ── Listeners ─────────────────────────────────────────────────────────────────
 let messageCounter = 0;
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener(handleIncomingMessage);
+
+function handleIncomingMessage(msg) {
   // Filter: only process messages meant for this tab's UI
   if (msg._targetTabId && msg._targetTabId !== state.targetTabId) return;
 
@@ -133,7 +149,16 @@ chrome.runtime.onMessage.addListener((msg) => {
       addVerificationStep(msg.data);
     }
   } else if (msg.type === 'TOGGLE_VERIFICATION_MODE') {
+    console.log('[Flow] Shortcut received: TOGGLE_VERIFICATION_MODE');
     toggleVerificationMode();
+  } else if (msg.type === 'TOGGLE_HOVER_MODE') {
+    console.log('[Flow] Shortcut received: TOGGLE_HOVER_MODE');
+    toggleHoverCaptureMode();
+  } else if (msg.type === 'TOGGLE_PAUSE_MODE') {
+    console.log('[Flow] Shortcut received: TOGGLE_PAUSE_MODE, state.isRecording:', state.isRecording, 'isPaused:', state.isPaused);
+    if (state.isRecording) {
+      state.isPaused ? resumeRecording() : pauseRecording();
+    }
   } else if (msg.type === 'TOGGLE_HOVER_MODE_OFF') {
     state.isHoverCaptureMode = false;
     render();
@@ -158,7 +183,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       render();
     });
   }
-});
+}
 
 // Mock keydown for Ctrl+V globally to enter verification mode
 // Also send message to content script to tell it we are in verification mode
