@@ -18,6 +18,7 @@
   let smartPaused = false;
   let smartVerification = false;
   let smartHoverCapture = false;
+  let bannerTimeout = null;
 
   // ── DOM elements ──────────────────────────────────────────────────────────
   const highlight = document.createElement('div');
@@ -76,22 +77,24 @@
         case 'START_RECORDING':
           smartRecording = true;
           smartPaused = false;
-          // Enable highlight on hover during recording
           highlight.className = 'capture-smart';
           highlight.style.display = 'block';
           document.addEventListener('mouseover', onSmartMouseOver, true);
           document.addEventListener('mouseout', onSmartMouseOut, true);
           bindSmartListeners();
+          updateSmartBanner();
           break;
         case 'STOP_RECORDING':
           smartRecording = false;
           smartPaused = false;
           smartVerification = false;
+          smartHoverCapture = false;
           unbindSmartListeners();
           document.removeEventListener('mouseover', onSmartMouseOver, true);
           document.removeEventListener('mouseout', onSmartMouseOut, true);
           highlight.style.display = 'none';
           tooltip.style.display = 'none';
+          banner.style.display = 'none';
           cleanup();
           break;
         case 'PAUSE_RECORDING':
@@ -99,6 +102,7 @@
           highlight.style.display = 'none';
           document.removeEventListener('mouseover', onSmartMouseOver, true);
           document.removeEventListener('mouseout', onSmartMouseOut, true);
+          updateSmartBanner();
           break;
         case 'START_VERIFICATION':
           smartVerification = true;
@@ -106,6 +110,7 @@
           document.body.classList.add('qa-capturing');
           highlight.className = 'capture-locator';
           highlight.style.display = 'block';
+          updateSmartBanner();
           break;
         case 'STOP_VERIFICATION':
           smartVerification = false;
@@ -115,6 +120,7 @@
             document.body.classList.remove('qa-capturing');
             tooltip.style.display = 'none';
           }
+          updateSmartBanner();
           break;
         case 'START_HOVER_CAPTURE':
           smartHoverCapture = true;
@@ -122,6 +128,7 @@
           document.body.classList.add('qa-capturing');
           highlight.className = 'capture-hover';
           highlight.style.display = 'block';
+          updateSmartBanner();
           break;
         case 'STOP_HOVER_CAPTURE':
           smartHoverCapture = false;
@@ -131,10 +138,47 @@
             document.body.classList.remove('qa-capturing');
             tooltip.style.display = 'none';
           }
+          updateSmartBanner();
           break;
       }
     }
   };
+
+  function updateSmartBanner() {
+    clearTimeout(bannerTimeout);
+
+    if (!smartRecording) {
+      banner.style.opacity = '0';
+      setTimeout(() => { banner.style.display = 'none'; }, 500);
+      return;
+    }
+    
+    banner.style.display = 'block';
+    // Force a reflow so the opacity transition triggers if display was just changed
+    void banner.offsetWidth;
+    banner.style.opacity = '1';
+    
+    if (smartVerification) {
+      banner.className = 'mode-locator';
+      banner.innerHTML = `🔍 <b>Verification Mode</b> &nbsp;·&nbsp; Click element to verify &nbsp;·&nbsp; <kbd>Esc</kbd> or <kbd>Alt+Shift+Q</kbd> to exit`;
+    } else if (smartHoverCapture) {
+      banner.className = 'mode-value';
+      banner.innerHTML = `🖐️ <b>Hover Capture Mode</b> &nbsp;·&nbsp; Click element to capture &nbsp;·&nbsp; <kbd>Esc</kbd> or <kbd>Alt+Shift+H</kbd> to exit`;
+    } else if (smartPaused) {
+      banner.className = 'mode-both';
+      banner.innerHTML = `⏸️ <b>Recording Paused</b> &nbsp;·&nbsp; <kbd>Alt+Shift+Y</kbd> to Resume`;
+    } else {
+      banner.className = 'mode-both';
+      banner.innerHTML = `🔴 <b>Recording Active</b> &nbsp;·&nbsp; <kbd>Alt+Shift+Y</kbd> Pause &nbsp;·&nbsp; <kbd>Alt+Shift+Q</kbd> Verify &nbsp;·&nbsp; <kbd>Alt+Shift+H</kbd> Hover`;
+    }
+    
+    bannerTimeout = setTimeout(() => {
+      banner.style.opacity = '0';
+      setTimeout(() => {
+        if (banner.style.opacity === '0') banner.style.display = 'none';
+      }, 500);
+    }, 4000);
+  }
   // ── Smart Hover Highlight ────────────────────────────────────────────────
   function onSmartMouseOver(e) {
     if (!smartRecording || smartPaused) return;
@@ -218,7 +262,8 @@
         customLocator: loc.locators.custom || '',
         attributes: { type: info.type }
       },
-      value: value
+      value: value,
+      timestamp: Date.now()
     };
 
     console.log('[Overlay] Dispatching step:', {
@@ -351,7 +396,8 @@
             customLocator: loc.locators.custom || '',
             attributes: { type: info.type }
           },
-          value: ''
+          value: '',
+          timestamp: Date.now()
         };
         document.dispatchEvent(new CustomEvent('qa-step-recorded', { detail: data }));
         
@@ -377,7 +423,8 @@
             customLocator: customLoc,
             attributes: { type: info.type },
             text: info.textContent || '',
-            value: info.value || ''
+            value: info.value || '',
+            timestamp: Date.now()
           };
           document.dispatchEvent(new CustomEvent('qa-element-captured', { detail: data }));
         }

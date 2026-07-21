@@ -54,9 +54,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   await new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: 'POPUP_INIT' }, (res) => {
       if (res?.tabId && !state.targetTabId) state.targetTabId = res.tabId;
+      
+      // Restore state from background if available
+      if (res?.recordingState) {
+        state.isRecording = res.recordingState.isRecording;
+        state.isPaused = res.recordingState.isPaused;
+        state.isVerificationMode = res.recordingState.isVerification;
+        state.isHoverCaptureMode = res.recordingState.isHoverCapture;
+      }
       resolve();
     });
   });
+
+  // Start recording immediately if we're not already recording
+  if (!state.isRecording) {
+    startRecording();
+  } else {
+    // If we are already in verification mode, ensure the UI reflects it
+    if (state.isVerificationMode) {
+      els.verificationBanner.classList.remove('hidden');
+      els.btnFinish.disabled = true;
+    }
+  }
 
   // Process any messages queued while the popup was closed
   chrome.runtime.sendMessage({ type: 'GET_PENDING_MESSAGES' }, (res) => {
@@ -67,10 +86,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Start recording immediately if we're not already recording
-  if (!state.isRecording) {
-    startRecording();
-  }
   render();
 });
 
@@ -162,6 +177,12 @@ function handleIncomingMessage(msg) {
   } else if (msg.type === 'TOGGLE_HOVER_MODE_OFF') {
     state.isHoverCaptureMode = false;
     render();
+  } else if (msg.type === 'UNDO_STEP') {
+    console.log('[Flow] Shortcut received: UNDO_STEP');
+    undo();
+  } else if (msg.type === 'REDO_STEP') {
+    console.log('[Flow] Shortcut received: REDO_STEP');
+    redo();
   } else if (msg.type === 'TARGET_TAB_CHANGED') {
     const tabActuallyChanged = state.targetTabId !== msg.tabId;
     state.targetTabId = msg.tabId;
@@ -253,12 +274,14 @@ function notifyParentModes() {
 function pushState() {
   undoStack.push(JSON.stringify(state.steps));
   redoStack = []; // clear redo stack on new action
+  scheduleAutoSave();
 }
 
 function undo() {
   if (undoStack.length === 0) return;
   redoStack.push(JSON.stringify(state.steps));
   state.steps = JSON.parse(undoStack.pop());
+  scheduleAutoSave();
   render();
 }
 
@@ -266,6 +289,7 @@ function redo() {
   if (redoStack.length === 0) return;
   undoStack.push(JSON.stringify(state.steps));
   state.steps = JSON.parse(redoStack.pop());
+  scheduleAutoSave();
   render();
 }
 
@@ -370,9 +394,19 @@ let _autoSaveDebounce = null;
 function scheduleAutoSave() {
   setAutosaveStatus('saving', '● Saving…');
   clearTimeout(_autoSaveDebounce);
-  _autoSaveDebounce = setTimeout(persistDraft, 1000);
+  _autoSaveDebounce = setTimeout(() => {
+    persistDraft();
+    _autoSaveDebounce = null;
+  }, 1000);
 }
 
+// Ensure pending saves are flushed immediately if the Side Panel is closed
+window.addEventListener('beforeunload', () => {
+  if (_autoSaveDebounce !== null) {
+    clearTimeout(_autoSaveDebounce);
+    persistDraft();
+  }
+});
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
 function mapLocalStepToBackend(step, index) {
@@ -461,9 +495,9 @@ function addStepFromCapture(data) {
   const selector = data.target.cssSelector || 'Unknown Element';
   const value = data.value || '';
   
-  // Prevent duplicate steps
-  const now = Date.now();
-  const timeSinceLastStep = now - lastRecordedStep.timestamp;
+  // Prevent duplicate steps by comparing actual capture time from content script
+  const eventTime = data.timestamp || Date.now();
+  const timeSinceLastStep = eventTime - lastRecordedStep.timestamp;
   
   // 1. Strict global debounce (ignore ANYTHING within 400ms of last step)
   // 2. Exact match debounce (ignore exact same action within 1000ms)
@@ -489,7 +523,7 @@ function addStepFromCapture(data) {
   console.log('[Flow] Adding step:', { type, selector, value });
   
   // Update last recorded step
-  lastRecordedStep = { selector, type, value, timestamp: now };
+  lastRecordedStep = { selector, type, value, timestamp: eventTime };
   
   const step = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -531,8 +565,8 @@ function addVerificationStep(elData) {
     expectedValue = elData.value || elData.text || '';
   }
   
-  const now = Date.now();
-  const timeSinceLastStep = now - lastRecordedStep.timestamp;
+  const eventTime = elData.timestamp || Date.now();
+  const timeSinceLastStep = eventTime - lastRecordedStep.timestamp;
   const isDuplicate = 
     timeSinceLastStep < 400 || 
     (
@@ -545,7 +579,7 @@ function addVerificationStep(elData) {
     
   if (isDuplicate) return;
   
-  lastRecordedStep = { selector, type: 'verify', verificationType: verType, value: expectedValue, timestamp: now };
+  lastRecordedStep = { selector, type: 'verify', verificationType: verType, value: expectedValue, timestamp: eventTime };
   
   const step = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -886,8 +920,8 @@ function bindCardEvents(card, step, index) {
 }
 
 function bindGlobalEvents() {
-  els.flowName.addEventListener('change', (e) => { state.flowName = e.target.value; });
-  els.defaultWait.addEventListener('change', (e) => { state.defaultWait = e.target.value; });
+  els.flowName.addEventListener('change', (e) => { state.flowName = e.target.value; scheduleAutoSave(); });
+  els.defaultWait.addEventListener('change', (e) => { state.defaultWait = e.target.value; scheduleAutoSave(); });
   
   els.btnUndo.addEventListener('click', undo);
   els.btnRedo.addEventListener('click', redo);

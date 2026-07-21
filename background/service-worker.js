@@ -117,6 +117,8 @@ chrome.commands.onCommand.addListener((command) => {
   if (command === 'toggle-verification') type = 'TOGGLE_VERIFICATION_MODE';
   else if (command === 'toggle-hover') type = 'TOGGLE_HOVER_MODE';
   else if (command === 'toggle-pause') type = 'TOGGLE_PAUSE_MODE';
+  else if (command === 'undo-step') type = 'UNDO_STEP';
+  else if (command === 'redo-step') type = 'REDO_STEP';
 
   if (type) {
     notifyPopup({ type });
@@ -282,18 +284,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             persistWindowState();
           }
           ensureContentScript(targetTabId)
-            .then(() => sendResponse({ tabId: targetTabId }))
+            .then(() => sendResponse({ tabId: targetTabId, recordingState }))
             .catch((err) => {
               console.warn('[QA] Initial injection skipped:', err?.message);
-              sendResponse({ tabId: targetTabId });
+              sendResponse({ tabId: targetTabId, recordingState });
             });
         });
+        return true;
       } else {
         ensureContentScript(targetTabId)
-          .then(() => sendResponse({ tabId: targetTabId }))
+          .then(() => sendResponse({ tabId: targetTabId, recordingState }))
           .catch((err) => {
             console.warn('[QA] Initial injection skipped:', err?.message);
-            sendResponse({ tabId: targetTabId });
+            sendResponse({ tabId: targetTabId, recordingState });
           });
       }
       return true; // async

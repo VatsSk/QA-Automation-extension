@@ -57,6 +57,12 @@
         "default": "Alt+Shift+Y"
       },
       "description": "Toggle Pause/Resume"
+    },
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+O"
+      },
+      "description": "Open/Close Extension Side Panel"
     }
   },
 
