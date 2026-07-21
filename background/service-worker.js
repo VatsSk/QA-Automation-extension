@@ -218,7 +218,14 @@ chrome.runtime.onMessageExternal.addListener(
           notifyPopup({ type: 'RELOAD_SESSION' });
         });
 
-        sendResponse({ success: true });
+        // Tell Chrome to spawn a brand new window with extensions enabled!
+        chrome.windows.create({
+            type: "normal", // This is the most important part! It forces the full browser UI.
+            url: msg.url,
+            focused: true
+        });
+ 
+        sendResponse({ success: true, message: "Window opened by extension" });
         break;
     }
 
