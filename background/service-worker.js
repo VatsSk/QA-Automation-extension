@@ -147,6 +147,10 @@ chrome.runtime.onMessageExternal.addListener(
           existingFlow: msg.existingFlow || null,
           mode: msg.flag || msg.mode || 'RUN', // flag from web-app, mode as fallback
         }).then(() => {
+          const launchMode = msg.flag || msg.mode || 'RUN';
+          const sidePanelPath = launchMode === 'FLOW' ? 'popup/flow.html' : 'popup/popup.html';
+          return chrome.sidePanel.setOptions({ path: sidePanelPath });
+        }).then(() => {
           return chrome.storage.local.remove(['flow_draft']); // Clear local draft on fresh server launch
         }).then(() => {
           notifyPopup({ type: 'RELOAD_SESSION' });
