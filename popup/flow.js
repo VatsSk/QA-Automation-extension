@@ -38,6 +38,7 @@ const els = {
   btnFinish: document.getElementById('btn-finish'),
   btnCancel: document.getElementById('btn-cancel'),
   btnHoverCapture: document.getElementById('btn-hover-capture'),
+  btnCaptureUrl: document.getElementById('btn-capture-url'),
   hoverBanner: document.getElementById('hover-banner'),
   autosaveStatus: document.getElementById('autosave-status')
 };
@@ -177,12 +178,20 @@ function handleIncomingMessage(msg) {
   } else if (msg.type === 'TOGGLE_HOVER_MODE_OFF') {
     state.isHoverCaptureMode = false;
     render();
-  } else if (msg.type === 'UNDO_STEP') {
-    console.log('[Flow] Shortcut received: UNDO_STEP');
-    undo();
-  } else if (msg.type === 'REDO_STEP') {
-    console.log('[Flow] Shortcut received: REDO_STEP');
-    redo();
+  } else if (msg.type === 'URL_CAPTURED') {
+    if (state.isRecording && !state.isPaused) {
+      console.log('[Flow] Shortcut received: URL_CAPTURED', msg.data.url);
+      pushState();
+      state.steps.push({
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+        type: 'navigate',
+        selector: '',
+        value: msg.data.url,
+        advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
+      });
+      scheduleAutoSave();
+      render();
+    }
   } else if (msg.type === 'TARGET_TAB_CHANGED') {
     const tabActuallyChanged = state.targetTabId !== msg.tabId;
     state.targetTabId = msg.tabId;
@@ -649,6 +658,8 @@ function render() {
     els.btnPause.classList.add('hidden');
     els.btnResume.classList.add('hidden');
     els.btnFinish.disabled = true;
+    els.btnHoverCapture.disabled = true;
+    els.btnCaptureUrl.disabled = true;
   } else if (state.isPaused) {
     els.recordingStatus.classList.remove('recording');
     els.recordingStatus.querySelector('.status-text').textContent = 'Paused';
@@ -656,6 +667,8 @@ function render() {
     els.btnPause.classList.add('hidden');
     els.btnResume.classList.remove('hidden');
     els.btnFinish.disabled = false;
+    els.btnHoverCapture.disabled = true;
+    els.btnCaptureUrl.disabled = true;
   } else {
     els.recordingStatus.classList.add('recording');
     els.recordingStatus.querySelector('.status-text').textContent = 'Recording';
@@ -663,6 +676,8 @@ function render() {
     els.btnPause.classList.remove('hidden');
     els.btnResume.classList.add('hidden');
     els.btnFinish.disabled = false;
+    els.btnHoverCapture.disabled = false;
+    els.btnCaptureUrl.disabled = false;
   }
   
   if (state.isVerificationMode) {
@@ -927,6 +942,35 @@ function bindGlobalEvents() {
   els.btnRedo.addEventListener('click', redo);
   els.btnPause.addEventListener('click', pauseRecording);
   els.btnResume.addEventListener('click', resumeRecording);
+  
+  document.addEventListener('keydown', (e) => {
+    if (e.altKey && e.shiftKey && (e.code === 'KeyC' || e.key.toLowerCase() === 'c')) {
+      e.preventDefault();
+      els.btnCaptureUrl.click();
+    }
+  });
+  
+  els.btnCaptureUrl.addEventListener('click', () => {
+    if (!state.isRecording || state.isPaused) return;
+    if (state.targetTabId) {
+      chrome.tabs.get(state.targetTabId, (tab) => {
+        if (tab && tab.url) {
+          pushState();
+          state.steps.push({
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+            type: 'navigate',
+            selector: '',
+            value: tab.url,
+            advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
+          });
+          scheduleAutoSave();
+          render();
+          showToast('Captured URL');
+        }
+      });
+    }
+  });
+
   els.btnFinish.addEventListener('click', async () => {
     stopRecording();
     els.btnFinish.disabled = true;

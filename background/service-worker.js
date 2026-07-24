@@ -117,8 +117,22 @@ chrome.commands.onCommand.addListener((command) => {
   if (command === 'toggle-verification') type = 'TOGGLE_VERIFICATION_MODE';
   else if (command === 'toggle-hover') type = 'TOGGLE_HOVER_MODE';
   else if (command === 'toggle-pause') type = 'TOGGLE_PAUSE_MODE';
-  else if (command === 'undo-step') type = 'UNDO_STEP';
-  else if (command === 'redo-step') type = 'REDO_STEP';
+
+  if (command === 'capture-url') {
+    if (targetTabId) {
+      chrome.tabs.get(targetTabId, (tab) => {
+        if (tab && tab.url) {
+          notifyPopupAsync({ type: 'URL_CAPTURED', data: { url: tab.url } }).then(delivered => {
+            if (!delivered) {
+              pendingMessages.push({ type: 'URL_CAPTURED', data: { url: tab.url } });
+              updateBadge();
+            }
+          });
+        }
+      });
+    }
+    return;
+  }
 
   if (type) {
     notifyPopup({ type });
@@ -364,6 +378,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'ELEMENT_CAPTURED': {
       console.log('[SW] Forwarding ELEMENT_CAPTURED:', msg.data?.cssSelector);
       notifyPopupAsync({ type: 'ELEMENT_CAPTURED', data: msg.data }).then(delivered => {
+        if (!delivered) {
+          pendingMessages.push(msg);
+          updateBadge();
+        }
+      });
+      sendResponse({ ok: true });
+      break;
+    }
+
+    // Forward URL captures from content script to popup
+    case 'URL_CAPTURED': {
+      console.log('[SW] Forwarding URL_CAPTURED:', msg.data?.url);
+      notifyPopupAsync({ type: 'URL_CAPTURED', data: msg.data }).then(delivered => {
         if (!delivered) {
           pendingMessages.push(msg);
           updateBadge();

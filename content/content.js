@@ -104,4 +104,9 @@
     chrome.runtime.sendMessage({ type: e.detail });
   });
 
+  document.addEventListener('qa-url-captured', (e) => {
+    console.log('[Content] Forwarding URL capture:', e.detail.url);
+    chrome.runtime.sendMessage({ type: 'URL_CAPTURED', data: e.detail });
+  });
+
 })();

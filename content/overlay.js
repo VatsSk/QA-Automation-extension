@@ -169,7 +169,7 @@
       banner.innerHTML = `⏸️ <b>Recording Paused</b> &nbsp;·&nbsp; <kbd>Alt+Shift+Y</kbd> to Resume`;
     } else {
       banner.className = 'mode-both';
-      banner.innerHTML = `🔴 <b>Recording Active</b> &nbsp;·&nbsp; <kbd>Alt+Shift+Y</kbd> Pause &nbsp;·&nbsp; <kbd>Alt+Shift+Q</kbd> Verify &nbsp;·&nbsp; <kbd>Alt+Shift+H</kbd> Hover`;
+      banner.innerHTML = `🔴 <b>Recording Active</b> &nbsp;·&nbsp; <kbd>Alt+Shift+Y</kbd> Pause &nbsp;·&nbsp; <kbd>Alt+Shift+Q</kbd> Verify &nbsp;·&nbsp; <kbd>Alt+Shift+H</kbd> Hover &nbsp;·&nbsp; <kbd>Alt+Shift+C</kbd> Capture URL`;
     }
     
     bannerTimeout = setTimeout(() => {
@@ -242,6 +242,13 @@
         console.log('[QA] Shortcut detected: Escape -> TOGGLE_HOVER_MODE');
         document.dispatchEvent(new CustomEvent('qa-ext-shortcut', { detail: 'TOGGLE_HOVER_MODE' }));
       }
+    }
+    
+    // Alt + Shift + C = Capture URL
+    if (e.altKey && e.shiftKey && (e.code === 'KeyC' || e.key.toLowerCase() === 'c')) {
+      e.preventDefault();
+      console.log('[QA] Shortcut detected: Alt+Shift+C -> URL_CAPTURED');
+      document.dispatchEvent(new CustomEvent('qa-url-captured', { detail: { url: window.location.href } }));
     }
   }
 

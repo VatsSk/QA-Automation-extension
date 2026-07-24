@@ -58,11 +58,11 @@
       },
       "description": "Toggle Pause/Resume"
     },
-    "_execute_action": {
+    "capture-url": {
       "suggested_key": {
-        "default": "Alt+Shift+O"
+        "default": "Alt+Shift+C"
       },
-      "description": "Open/Close Extension Side Panel"
+      "description": "Capture current URL as a step"
     }
   },
 
