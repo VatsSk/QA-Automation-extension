@@ -333,28 +333,6 @@
           : (el.closest ? el.closest('[id^="select2-"][id$="-container"]') : null);
           
       if (container && container.id) {
-         if (el === container) {
-           const xpath = `//${container.tagName.toLowerCase()}[@id="${container.id}"]`;
-           if (isUniqueXPath(xpath)) {
-             candidates.push({ 
-               type: 'Select2 ID', 
-               value: xpath, 
-               score: 100, 
-               note: 'Select2 container ID' 
-             });
-           }
-         } else {
-           const relativeXPath = this._buildRelativeXPath(container, el);
-           if (isUniqueXPath(relativeXPath)) {
-             candidates.push({ 
-               type: 'Select2 Child', 
-               value: relativeXPath, 
-               score: 100, 
-               note: 'Select2 exact child element' 
-             });
-           }
-         }
-         
          // Try to find original select element
          const match = container.id.match(/^select2-(.+)-container$/);
          if (match && match[1] && document.getElementById(match[1])) {
