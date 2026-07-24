@@ -227,15 +227,22 @@
   function bindSmartListeners() {
     // Always unbind first to prevent duplicate listeners after pause/resume cycles
     unbindSmartListeners();
-    // Listen to both mousedown and click to capture disappearing dropdown elements.
-    // The strict 400ms debounce inside onSmartClick will safely ignore the redundant click.
+    // Listen to all click-related events to capture disappearing dropdown elements
+    // and to aggressively block them during verification/hover modes.
+    // The strict 400ms debounce inside onSmartClick safely ignores redundant events.
     document.addEventListener('mousedown', onSmartClick, true);
+    document.addEventListener('mouseup', onSmartClick, true);
+    document.addEventListener('pointerdown', onSmartClick, true);
+    document.addEventListener('pointerup', onSmartClick, true);
     document.addEventListener('click', onSmartClick, true);
     document.addEventListener('keydown', onSmartKeyDown, true);
   }
 
   function unbindSmartListeners() {
     document.removeEventListener('mousedown', onSmartClick, true);
+    document.removeEventListener('mouseup', onSmartClick, true);
+    document.removeEventListener('pointerdown', onSmartClick, true);
+    document.removeEventListener('pointerup', onSmartClick, true);
     document.removeEventListener('click', onSmartClick, true);
     document.removeEventListener('keydown', onSmartKeyDown, true);
   }
