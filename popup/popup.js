@@ -51,22 +51,29 @@ function initServiceWorker() {
     updateTabLabel();
   });
 
-  chrome.runtime.onMessage.addListener((msg) => {
-    switch (msg.type) {
-      case 'TARGET_TAB_CHANGED':
-        targetTabId = msg.tabId;
-        updateTabLabel();
-        break;
-      case 'CAPTURE_RESULT':
-        handleCaptureResult(msg.captureMode, msg.result);
-        break;
-      case 'RELOAD_SESSION':
-        restoreState().then(() => {
-          ensureSystemScenario().then(() => render());
-        });
-        break;
-    }
-  });
+  // Open a persistent port for reliable message delivery from the SW
+  const panelPort = chrome.runtime.connect({ name: 'qa-panel' });
+  panelPort.onMessage.addListener(handleSwMessage);
+
+  // Keep the old onMessage listener as a fallback
+  chrome.runtime.onMessage.addListener(handleSwMessage);
+}
+
+function handleSwMessage(msg) {
+  switch (msg.type) {
+    case 'TARGET_TAB_CHANGED':
+      targetTabId = msg.tabId;
+      updateTabLabel();
+      break;
+    case 'CAPTURE_RESULT':
+      handleCaptureResult(msg.captureMode, msg.result);
+      break;
+    case 'RELOAD_SESSION':
+      restoreState().then(() => {
+        ensureSystemScenario().then(() => render());
+      });
+      break;
+  }
 }
 
 function updateTabLabel() {
