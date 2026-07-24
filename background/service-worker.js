@@ -2,12 +2,32 @@
 // Message router and state manager. Coordinates between the Side Panel UI and
 // scripts injected on target tabs.
 
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((error) => console.error('[QA] Side panel config error:', error));
+// ── Setup: runs once when extension is installed/updated or Chrome starts ─────
+// Wrapped in onInstalled/onStartup so Chrome has fully registered the SW first,
+// avoiding the "No SW" error from sidePanel API.
+function initExtension() {
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.error('[QA] Side panel config error:', error));
+
+  // Keep service worker alive FOREVER — alarm fires every 25s,
+  // resetting Chrome's 30s idle timer so it never kills the SW.
+  chrome.alarms.create('keepAlive', { periodInMinutes: 25 / 60 });
+}
+
+chrome.runtime.onInstalled.addListener(initExtension);
+chrome.runtime.onStartup.addListener(initExtension);
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keepAlive') {
+    // No-op — just being woken up resets Chrome's 30s idle timer
+  }
+});
 
 let targetTabId = null;         // The tab the user is recording against
 let pendingMessages = [];       // Queue for messages received while popup is closed
+let panelPort = null;            // Persistent port to the side panel
+let activeWindowId = null;       // The ID of the window spawned by the extension
 
 // ── Recording state tracked in the SW so we can auto-reinject after navigation ─
 let recordingState = {
@@ -21,7 +41,7 @@ let recordingState = {
 // ── Persist / restore state across service-worker restarts ───────────────────
 // MV3 service workers are ephemeral — Chrome can terminate them at any time.
 async function persistWindowState() {
-  await chrome.storage.session.set({ targetTabId, recordingState });
+  await chrome.storage.session.set({ targetTabId, recordingState, pendingMessages, activeWindowId });
 }
 
 function updateBadge() {
@@ -34,10 +54,36 @@ function updateBadge() {
 }
 
 async function restoreWindowState() {
-  const s = await chrome.storage.session.get(['targetTabId', 'recordingState']);
+  const s = await chrome.storage.session.get(['targetTabId', 'recordingState', 'pendingMessages', 'activeWindowId']);
   if (s.targetTabId) targetTabId = s.targetTabId;
   if (s.recordingState) recordingState = s.recordingState;
+  if (s.pendingMessages && s.pendingMessages.length > 0) pendingMessages = s.pendingMessages;
+  if (s.activeWindowId) activeWindowId = s.activeWindowId;
 }
+
+// ── Persistent port connection from side panel ───────────────────────────────
+// Instead of unreliable chrome.runtime.sendMessage, the side panel opens a
+// long-lived port. We push messages through this port, and instantly know
+// if the panel is connected or disconnected.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'qa-panel') {
+    console.log('[SW] Side panel connected via port');
+    panelPort = port;
+
+    port.onDisconnect.addListener(() => {
+      console.log('[SW] Side panel disconnected');
+      panelPort = null;
+    });
+  }
+});
+
+// ── Clean up window ID when the user closes the window ───────────────────────
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === activeWindowId) {
+    activeWindowId = null;
+    persistWindowState();
+  }
+});
 
 // Track closed tabs to clear state
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -111,7 +157,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 }});
 
 // ── Listen for Chrome Commands (Global Shortcuts) ──────────────────────────────
-chrome.commands.onCommand.addListener((command) => {
+chrome.commands.onCommand.addListener(async (command) => {
+  await restoreWindowState();
   console.log('[SW] Command received:', command);
   let type;
   if (command === 'toggle-verification') type = 'TOGGLE_VERIFICATION_MODE';
@@ -134,36 +181,70 @@ chrome.runtime.onMessageExternal.addListener(
     switch (msg.action) {
 
       case 'START_RECORDING':
-
-        chrome.storage.local.set({
-          projectId: msg.projectId,
-          moduleId: msg.moduleId,
-          createdBy: msg.createdBy,
-          url: msg.url,
-          csvPath: msg.csvPath,
-          runId: msg.runId || null,
-          existingRun: msg.existingRun || null,
-          flowId: msg.flowId || null,
-          existingFlow: msg.existingFlow || null,
-          mode: msg.flag || msg.mode || 'RUN', // flag from web-app, mode as fallback
-        }).then(() => {
-          const launchMode = msg.flag || msg.mode || 'RUN';
-          const sidePanelPath = launchMode === 'FLOW' ? 'popup/flow.html' : 'popup/popup.html';
-          return chrome.sidePanel.setOptions({ path: sidePanelPath });
-        }).then(() => {
-          return chrome.storage.local.remove(['flow_draft']); // Clear local draft on fresh server launch
-        }).then(() => {
-          notifyPopup({ type: 'RELOAD_SESSION' });
-        });
-
-          // Tell Chrome to spawn a brand new window with extensions enabled!
-        chrome.windows.create({
-            type: "normal", // This is the most important part! It forces the full browser UI.
+        const launchNewSession = () => {
+          chrome.storage.local.set({
+            projectId: msg.projectId,
+            moduleId: msg.moduleId,
+            createdBy: msg.createdBy,
             url: msg.url,
-            focused: true
-        });
- 
-        sendResponse({ success: true, message: "Window opened by extension" });
+            csvPath: msg.csvPath,
+            runId: msg.runId || null,
+            existingRun: msg.existingRun || null,
+            flowId: msg.flowId || null,
+            existingFlow: msg.existingFlow || null,
+            mode: msg.flag || msg.mode || 'RUN', // flag from web-app, mode as fallback
+          }).then(() => {
+            const launchMode = msg.flag || msg.mode || 'RUN';
+            const sidePanelPath = launchMode === 'FLOW' ? 'popup/flow.html' : 'popup/popup.html';
+            return chrome.sidePanel.setOptions({ path: sidePanelPath });
+          }).then(() => {
+            return chrome.storage.local.remove(['flow_draft']); // Clear local draft on fresh server launch
+          }).then(() => {
+            notifyPopup({ type: 'RELOAD_SESSION' });
+            
+            // Tell Chrome to spawn a brand new window with extensions enabled!
+            chrome.windows.create({
+                type: "normal", // This is the most important part! It forces the full browser UI.
+                url: msg.url,
+                focused: true
+            }, (win) => {
+                if (win) {
+                  activeWindowId = win.id;
+                  persistWindowState();
+                }
+            });
+            sendResponse({ success: true, message: "Window opened by extension" });
+          });
+        };
+
+        // Guard: Prevent overwriting an active session if the extension is already open.
+        if (activeWindowId) {
+          chrome.windows.get(activeWindowId, (win) => {
+            if (chrome.runtime.lastError || !win) {
+              // The window was closed, so clear the ID and launch a new session
+              activeWindowId = null;
+              persistWindowState();
+              launchNewSession();
+            } else {
+              // The window is still open! Just block the request so the web app can show the error.
+              console.warn("[SW] Blocked duplicate launch: extension window is already open.");
+              sendResponse({ 
+                success: false, 
+                message: "QA Extension is already open in another window. Please close it first before starting a new session." 
+              });
+            }
+          });
+        } else if (panelPort !== null || recordingState.isRecording) {
+          // If we don't have the window ID but we know it's active
+          console.warn("[SW] Blocked duplicate launch: extension is already active.");
+          sendResponse({ 
+            success: false, 
+            message: "QA Extension is already active in another tab or window. Please close it first before starting a new session." 
+          });
+        } else {
+          // Clean slate, launch new session
+          launchNewSession();
+        }
         break;
     }
 
@@ -214,6 +295,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'GET_PENDING_MESSAGES': {
       sendResponse({ messages: pendingMessages });
       pendingMessages = [];
+      persistWindowState();
       updateBadge();
       return true;
     }
@@ -281,28 +363,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // Popup asks: who is the current target tab?
     case 'POPUP_INIT': {
-      if (!targetTabId) {
-        chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-          if (tabs && tabs.length > 0) {
-            targetTabId = tabs[0].id;
-            persistWindowState();
-          }
+      restoreWindowState().then(() => {
+        // If no target tab, try to find the active tab
+        if (!targetTabId) {
+          chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+            if (tabs[0]) {
+              targetTabId = tabs[0].id;
+              persistWindowState();
+            }
+            ensureContentScript(targetTabId)
+              .then(() => sendResponse({ tabId: targetTabId, recordingState }))
+              .catch(() => sendResponse({ tabId: targetTabId, recordingState }));
+          });
+        } else {
           ensureContentScript(targetTabId)
             .then(() => sendResponse({ tabId: targetTabId, recordingState }))
-            .catch((err) => {
-              console.warn('[QA] Initial injection skipped:', err?.message);
-              sendResponse({ tabId: targetTabId, recordingState });
-            });
-        });
-        return true;
-      } else {
-        ensureContentScript(targetTabId)
-          .then(() => sendResponse({ tabId: targetTabId, recordingState }))
-          .catch((err) => {
-            console.warn('[QA] Initial injection skipped:', err?.message);
-            sendResponse({ tabId: targetTabId, recordingState });
-          });
-      }
+            .catch(() => sendResponse({ tabId: targetTabId, recordingState }));
+        }
+      });
       return true; // async
     }
 
@@ -353,6 +431,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       notifyPopupAsync({ type: 'STEP_RECORDED', data: msg.data }).then(delivered => {
         if (!delivered) {
           pendingMessages.push(msg);
+          persistWindowState();
           updateBadge();
         }
       });
@@ -366,6 +445,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       notifyPopupAsync({ type: 'ELEMENT_CAPTURED', data: msg.data }).then(delivered => {
         if (!delivered) {
           pendingMessages.push(msg);
+          persistWindowState();
           updateBadge();
         }
       });
@@ -485,6 +565,20 @@ async function ensureContentScript(tabId) {
 async function notifyPopupAsync(msg) {
   if (!targetTabId) return false;
   msg._targetTabId = targetTabId;
+  
+  // Use the persistent port if connected (reliable)
+  if (panelPort) {
+    try {
+      panelPort.postMessage(msg);
+      return true;
+    } catch (err) {
+      console.warn('[SW] Port send failed:', err.message);
+      panelPort = null; // Port is dead, clear it
+      return false;
+    }
+  }
+  
+  // Fallback: try chrome.runtime.sendMessage (less reliable)
   try {
     await chrome.runtime.sendMessage(msg);
     return true;

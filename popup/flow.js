@@ -135,6 +135,12 @@ async function loadSession() {
 // ── Listeners ─────────────────────────────────────────────────────────────────
 let messageCounter = 0;
 
+// Open a persistent port to the service worker so messages are delivered
+// reliably even when the side panel doesn't have focus.
+const panelPort = chrome.runtime.connect({ name: 'qa-panel' });
+panelPort.onMessage.addListener(handleIncomingMessage);
+
+// Keep the old onMessage listener as a fallback for non-port messages
 chrome.runtime.onMessage.addListener(handleIncomingMessage);
 
 function handleIncomingMessage(msg) {

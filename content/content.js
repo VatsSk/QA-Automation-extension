@@ -5,10 +5,19 @@
 (function () {
   'use strict';
 
-  if (window.__qaContentLoaded) return;
+  // ── Re-injection safe: clean up previous instance before initializing ──────
+  if (window.__qaContentCleanup) {
+    try { window.__qaContentCleanup(); } catch (_) {}
+  }
   window.__qaContentLoaded = true;
 
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Store references to event listeners so we can remove them on re-injection
+  let stepRecordedHandler = null;
+  let elementCapturedHandler = null;
+  let shortcutHandler = null;
+  let messageHandler = null;
+
+  messageHandler = (msg, sender, sendResponse) => {
     switch (msg.type) {
 
       case 'PING':
@@ -70,14 +79,15 @@
       default:
         break;
     }
-  });
+  };
+  chrome.runtime.onMessage.addListener(messageHandler);
 
   // Listen for custom events from overlay.js and forward them to the background script
   // Use { once: false } but track if we've already sent this specific event
   let lastEventDetail = null;
   let lastEventTime = 0;
   
-  document.addEventListener('qa-step-recorded', (e) => {
+  stepRecordedHandler = (e) => {
     const now = Date.now();
     const detail = JSON.stringify(e.detail);
     
@@ -92,16 +102,27 @@
     
     console.log('[Content] Forwarding qa-step-recorded:', e.detail.target?.cssSelector);
     chrome.runtime.sendMessage({ type: 'STEP_RECORDED', data: e.detail });
-  });
+  };
+  document.addEventListener('qa-step-recorded', stepRecordedHandler);
 
-  document.addEventListener('qa-element-captured', (e) => {
+  elementCapturedHandler = (e) => {
     console.log('[Content] Forwarding qa-element-captured:', e.detail.cssSelector);
     chrome.runtime.sendMessage({ type: 'ELEMENT_CAPTURED', data: e.detail });
-  });
+  };
+  document.addEventListener('qa-element-captured', elementCapturedHandler);
 
-  document.addEventListener('qa-ext-shortcut', (e) => {
+  shortcutHandler = (e) => {
     console.log('[Content] Forwarding shortcut:', e.detail);
     chrome.runtime.sendMessage({ type: e.detail });
-  });
+  };
+  document.addEventListener('qa-ext-shortcut', shortcutHandler);
+
+  // Expose cleanup for re-injection
+  window.__qaContentCleanup = function () {
+    if (messageHandler) chrome.runtime.onMessage.removeListener(messageHandler);
+    if (stepRecordedHandler) document.removeEventListener('qa-step-recorded', stepRecordedHandler);
+    if (elementCapturedHandler) document.removeEventListener('qa-element-captured', elementCapturedHandler);
+    if (shortcutHandler) document.removeEventListener('qa-ext-shortcut', shortcutHandler);
+  };
 
 })();

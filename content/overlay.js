@@ -5,7 +5,13 @@
 (function () {
   'use strict';
 
-  if (window.__qaOverlayLoaded) return;
+  // ── Re-injection safe: clean up previous instance before initializing ──────
+  // When Chrome re-injects scripts (after navigation, SW restart, etc.),
+  // the old script is dead but its flag survives. Instead of blocking
+  // re-initialization, we clean up the old instance and start fresh.
+  if (window.__qaOverlayCleanup) {
+    try { window.__qaOverlayCleanup(); } catch (_) {}
+  }
   window.__qaOverlayLoaded = true;
 
   let active = false;
@@ -100,8 +106,12 @@
         case 'PAUSE_RECORDING':
           smartPaused = true;
           highlight.style.display = 'none';
+          tooltip.style.display = 'none';
+          // Unbind ALL smart listeners during pause, not just hover.
+          // They will be re-bound cleanly when recording resumes.
           document.removeEventListener('mouseover', onSmartMouseOver, true);
           document.removeEventListener('mouseout', onSmartMouseOut, true);
+          unbindSmartListeners();
           updateSmartBanner();
           break;
         case 'START_VERIFICATION':
@@ -215,6 +225,8 @@
   // ONLY listens on click. No browser events (change/input) are recorded.
   // On click, we inspect the element and create the correct step type.
   function bindSmartListeners() {
+    // Always unbind first to prevent duplicate listeners after pause/resume cycles
+    unbindSmartListeners();
     // Listen to both mousedown and click to capture disappearing dropdown elements.
     // The strict 400ms debounce inside onSmartClick will safely ignore the redundant click.
     document.addEventListener('mousedown', onSmartClick, true);
@@ -644,15 +656,36 @@
   function cleanup() {
     active = false;
     lastTarget = null;
+    // Reset smart recording state to prevent stale flags on re-injection
+    smartRecording = false;
+    smartPaused = false;
+    smartVerification = false;
+    smartHoverCapture = false;
+    clearTimeout(bannerTimeout);
     document.body.classList.remove('qa-capturing');
     highlight.style.display = 'none';
     tooltip.style.display = 'none';
     banner.style.display = 'none';
+    // Remove manual capture listeners
     document.removeEventListener('mouseover', onMouseOver, true);
     document.removeEventListener('mouseout', onMouseOut, true);
     document.removeEventListener('mousedown', onClick, true);
     document.removeEventListener('click', onClick, true);
     document.removeEventListener('keydown', onKeyDown, true);
+    // Remove smart recording listeners
+    document.removeEventListener('mouseover', onSmartMouseOver, true);
+    document.removeEventListener('mouseout', onSmartMouseOut, true);
+    unbindSmartListeners();
   }
+
+  // Expose cleanup for re-injection: when scripts are re-injected,
+  // the new instance calls this to tear down the old one.
+  window.__qaOverlayCleanup = function () {
+    cleanup();
+    // Remove injected DOM elements
+    highlight.remove();
+    tooltip.remove();
+    banner.remove();
+  };
 
 })();
