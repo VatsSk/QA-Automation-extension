@@ -498,7 +498,8 @@ function getSuggestedVerification(elData) {
   if (tag === 'img') return 'Visible';
   if (tag === 'input' && elData.attributes?.type === 'checkbox') return 'Checked';
   if (tag === 'select') return 'Selected Value';
-  if (tag === 'input' || tag === 'button') return 'Visible';
+  
+  // Default to Text Equals for inputs, buttons, labels, etc.
   return 'Text Equals';
 }
 

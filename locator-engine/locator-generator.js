@@ -283,14 +283,25 @@
     },
 
     _generateTextLocators(el, candidates) {
-      const text = (el.textContent || '').trim();
       const tag = el.tagName.toLowerCase();
+      let text = '';
+      if (tag === 'input') {
+        text = (el.value || '').trim();
+      } else {
+        text = (el.textContent || '').trim();
+      }
       
       if (!text || text.length > 80) return;
-      if (!['button', 'a', 'label', 'span', 'li'].includes(tag)) return;
+      if (!['button', 'a', 'label', 'span', 'li', 'input'].includes(tag)) return;
 
       // Exact text match
-      const xpath = `//${tag}[normalize-space()="${escapeAttr(text)}"]`;
+      let xpath;
+      if (tag === 'input') {
+        xpath = `//${tag}[@value="${escapeAttr(text)}"]`;
+      } else {
+        xpath = `//${tag}[normalize-space()="${escapeAttr(text)}"]`;
+      }
+      
       if (isUniqueXPath(xpath)) {
         candidates.push({ 
           type: 'text-exact', 
@@ -306,7 +317,14 @@
         const classCondition = stableClasses
           .map(c => `contains(@class,'${escapeAttr(c)}')`)
           .join(' and ');
-        const xpath2 = `//${tag}[${classCondition} and normalize-space()="${escapeAttr(text)}"]`;
+        
+        let xpath2;
+        if (tag === 'input') {
+          xpath2 = `//${tag}[${classCondition} and @value="${escapeAttr(text)}"]`;
+        } else {
+          xpath2 = `//${tag}[${classCondition} and normalize-space()="${escapeAttr(text)}"]`;
+        }
+        
         if (isUniqueXPath(xpath2)) {
           candidates.push({ 
             type: 'text+class', 
@@ -845,7 +863,13 @@
 
     // Extract visible text shown to the user — used for verification value only
     extractValue(el) {
-      let val = el.innerText || el.textContent || '';
+      const tag = (el.tagName || '').toLowerCase();
+      let val = '';
+      if (tag === 'input' || tag === 'textarea') {
+        val = el.value || '';
+      } else {
+        val = el.innerText || el.textContent || '';
+      }
       
       // Fix for Select2: Selenium's getText() inserts a space after the clear button (×)
       // because of its CSS layout, whereas Chrome's innerText sometimes concatenates them (×pinku).
