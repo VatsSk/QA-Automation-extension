@@ -21,6 +21,7 @@
     /^radix-/,                               // Radix UI
     /^headlessui-/,                          // Headless UI
     /^:r[a-z0-9]+:$/,                        // React 18 IDs
+    /-\d{13}-[a-f0-9]{24}$/i,                // Dynamic IDs with timestamp and hash (e.g., treeSelector-li-)
   ];
 
   const UNSTABLE_CLASS_PATTERNS = [
