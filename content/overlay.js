@@ -450,6 +450,7 @@
             attributes: { type: info.type },
             text: info.textContent || '',
             value: info.value || '',
+            placeholder: info.placeholder || '',
             timestamp: Date.now()
           };
           document.dispatchEvent(new CustomEvent('qa-element-captured', { detail: data }));

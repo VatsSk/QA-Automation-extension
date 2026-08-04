@@ -443,6 +443,7 @@ function mapLocalStepToBackend(step, index) {
     selector: step.selector,
     value: isVerify ? null : step.value,
     expectedValue: isVerify ? step.value : null,
+    textSource: step.textSource || null,
     attribute: step.verificationType === 'Alt Text' ? 'alt' : null,
     overrideWait: !!step.advanced.overrideWait,
     wait: step.advanced.overrideWait ? (parseInt(step.advanced.overrideWait) * 1000) : null,
@@ -468,6 +469,7 @@ function mapBackendStepToLocal(bStep) {
     selector: bStep.selector || '',
     verificationType: bStep.actionType === 'VERIFY' ? (localVerMap[bStep.verificationType] || 'Visible') : null,
     value: bStep.actionType === 'VERIFY' ? (bStep.expectedValue || '') : (bStep.value || ''),
+    textSource: bStep.textSource || 'text',
     advanced: {
       overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
       retryCount: bStep.retryCount || 0,
@@ -573,10 +575,18 @@ function addVerificationStep(elData) {
   const selector = elData.cssSelector || 'Unknown Element';
   const verType = getSuggestedVerification(elData);
   let expectedValue = '';
+  let textSource = 'text';
   if (verType === 'Text Equals') {
-    // Prefer elData.value (innerText) over elData.text (textContent) 
-    // because Selenium's getText() respects layout and spaces like innerText.
-    expectedValue = elData.value || elData.text || '';
+    if (elData.value) {
+      expectedValue = elData.value;
+      textSource = 'value';
+    } else if (elData.text) {
+      expectedValue = elData.text;
+      textSource = 'text';
+    } else if (elData.placeholder) {
+      expectedValue = elData.placeholder;
+      textSource = 'placeholder';
+    }
   } else if (['Value', 'Selected Value', 'Image Source', 'Alt Text'].includes(verType)) {
     expectedValue = elData.value || elData.text || '';
   }
@@ -595,7 +605,7 @@ function addVerificationStep(elData) {
     
   if (isDuplicate) return;
   
-  lastRecordedStep = { selector, type: 'verify', verificationType: verType, value: expectedValue, timestamp: eventTime };
+  lastRecordedStep = { selector, type: 'verify', verificationType: verType, value: expectedValue, timestamp: eventTime, textSource };
   
   const step = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -603,6 +613,7 @@ function addVerificationStep(elData) {
     selector: selector,
     verificationType: verType,
     value: expectedValue,
+    textSource: textSource,
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
   
