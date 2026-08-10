@@ -188,15 +188,30 @@ function handleIncomingMessage(msg) {
     if (state.isRecording && !state.isPaused) {
       console.log('[Flow] Shortcut received: URL_CAPTURED', msg.data.url);
       pushState();
-      state.steps.push({
+      const step = {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
         type: 'navigate',
         selector: '',
         value: msg.data.url,
         advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
-      });
-      scheduleAutoSave();
-      render();
+      };
+      
+      if (_captureInsertIndex !== null) {
+        const insertAt = _captureInsertIndex;
+        state.steps.splice(insertAt, 0, step);
+        _captureInsertIndex = insertAt + 1;
+        scheduleAutoSave();
+        render();
+        setTimeout(() => {
+          const cards = els.timelineSteps.querySelectorAll('.step-card');
+          cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 60);
+      } else {
+        state.steps.push(step);
+        scheduleAutoSave();
+        render();
+        scrollToBottom();
+      }
     }
   } else if (msg.type === 'TARGET_TAB_CHANGED') {
     const tabActuallyChanged = state.targetTabId !== msg.tabId;
@@ -974,15 +989,29 @@ function bindGlobalEvents() {
       chrome.tabs.get(state.targetTabId, (tab) => {
         if (tab && tab.url) {
           pushState();
-          state.steps.push({
+          const step = {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
             type: 'navigate',
             selector: '',
             value: tab.url,
             advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
-          });
-          scheduleAutoSave();
-          render();
+          };
+          if (_captureInsertIndex !== null) {
+            const insertAt = _captureInsertIndex;
+            state.steps.splice(insertAt, 0, step);
+            _captureInsertIndex = insertAt + 1;
+            scheduleAutoSave();
+            render();
+            setTimeout(() => {
+              const cards = els.timelineSteps.querySelectorAll('.step-card');
+              cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 60);
+          } else {
+            state.steps.push(step);
+            scheduleAutoSave();
+            render();
+            scrollToBottom();
+          }
           showToast('Captured URL');
         }
       });
