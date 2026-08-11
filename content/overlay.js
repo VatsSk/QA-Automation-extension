@@ -450,6 +450,7 @@
             attributes: { type: info.type },
             text: info.textContent || '',
             value: info.value || '',
+            checked: el.checked,
             placeholder: info.placeholder || '',
             timestamp: Date.now()
           };

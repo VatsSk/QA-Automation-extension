@@ -446,7 +446,7 @@ function mapLocalStepToBackend(step, index) {
   };
   const verTypeMap = {
     'Visible': 'VISIBLE', 'Exists': 'EXISTS', 'Image Source': 'IMAGE', 'Alt Text': 'ATTRIBUTE',
-    'Value': 'VALUE', 'Enabled': 'ENABLED', 'Disabled': 'DISABLED', 'Checked': 'CHECKED', 'Text Equals': 'TEXT'
+    'Value': 'VALUE', 'Enabled': 'ENABLED', 'Disabled': 'DISABLED', 'Checked': 'CHECKED', 'Unchecked': 'UNCHECKED', 'Text Equals': 'TEXT'
   };
 
   const isVerify = step.type === 'verify';
@@ -475,7 +475,7 @@ function mapBackendStepToLocal(bStep) {
   };
   const localVerMap = {
     VISIBLE: 'Visible', EXISTS: 'Exists', IMAGE: 'Image Source', ATTRIBUTE: 'Alt Text',
-    VALUE: 'Value', ENABLED: 'Enabled', DISABLED: 'Disabled', CHECKED: 'Checked', TEXT: 'Text Equals'
+    VALUE: 'Value', ENABLED: 'Enabled', DISABLED: 'Disabled', CHECKED: 'Checked', UNCHECKED: 'Unchecked', TEXT: 'Text Equals'
   };
 
   return {
@@ -513,7 +513,7 @@ function mapActionToStepType(data) {
 function getSuggestedVerification(elData) {
   const tag = (elData.tag || '').toLowerCase();
   if (tag === 'img') return 'Visible';
-  if (tag === 'input' && elData.attributes?.type === 'checkbox') return 'Checked';
+  if (tag === 'input' && elData.attributes?.type === 'checkbox') return elData.checked === false ? 'Unchecked' : 'Checked';
   if (tag === 'select') return 'Selected Value';
   
   // Default to Text Equals for inputs, buttons, labels, etc.
@@ -872,7 +872,7 @@ function createStepCard(step, index) {
   } else if (step.type === 'verify') {
     body.appendChild(createFieldRow('Type', `
       <select class="step-input value-update" data-field="verificationType">
-        ${['Visible', 'Exists', 'Image Source', 'Alt Text', 'Value', 'Enabled', 'Disabled', 'Checked', 'Selected Value', 'Text Equals']
+        ${['Visible', 'Exists', 'Image Source', 'Alt Text', 'Value', 'Enabled', 'Disabled', 'Checked', 'Unchecked', 'Selected Value', 'Text Equals']
           .map(opt => `<option value="${opt}" ${step.verificationType === opt ? 'selected' : ''}>${opt}</option>`).join('')}
       </select>
     `));
