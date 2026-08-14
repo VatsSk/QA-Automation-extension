@@ -103,6 +103,7 @@ const ApiClient = {
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
       },
       body: JSON.stringify(payload)
+
     });
 
     if (!res.ok) {
@@ -112,3 +113,31 @@ const ApiClient = {
     return res.json();
   }
 };
+
+const request = async (method, endpoint, data, authToken) => {
+    const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method,
+        headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
+        ...(data ? { body: JSON.stringify(data) } : {})
+    });
+    if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`API ${res.status}: ${err}`);
+    }
+    return res.json();
+};
+
+const components = {
+    listModules: (projectId, authToken) => request('GET', `/api/components/modules/${projectId}`, null, authToken),
+    createModule: (data, authToken) => request('POST', `/api/components/modules`, data, authToken),
+    listComponents: (projectId, moduleId, authToken) => request('GET', `/api/components/${projectId}/${moduleId}`, null, authToken),
+    createComponent: (data, authToken) => request('POST', `/api/components`, data, authToken),
+    updateComponent: (id, data, authToken) => request('PUT', `/api/components/${id}`, data, authToken),
+    getFlowInfo: (flowId, authToken) => request('GET', `/api/components/flow-info/${flowId}`, null, authToken),
+    saveFlowInfo: (flowId, data, authToken) => request('PUT', `/api/components/flow-info/${flowId}`, data, authToken)
+};
+
+window.components = components;

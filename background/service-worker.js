@@ -196,23 +196,45 @@ chrome.runtime.onMessageExternal.addListener(
 
       case 'START_RECORDING':
         const launchNewSession = () => {
-          chrome.storage.local.set({
+          const launchMode = msg.flag || msg.mode || 'RUN';
+          const sessionData = {
             projectId: msg.projectId,
-            moduleId: msg.moduleId,
             createdBy: msg.createdBy,
             url: msg.url,
-            csvPath: msg.csvPath,
-            runId: msg.runId || null,
-            existingRun: msg.existingRun || null,
-            flowId: msg.flowId || null,
-            existingFlow: msg.existingFlow || null,
-            mode: msg.flag || msg.mode || 'RUN', // flag from web-app, mode as fallback
-          }).then(() => {
+            mode: launchMode
+          };
+
+          if (launchMode === 'COMPONENT') {
+            console.log("[SW] Launching Component Recorder");
+            console.log("[SW] Captured compModuleId from web:", msg.compModuleId);
+            sessionData.compModuleId = msg.compModuleId;
+            sessionData.compId = msg.compId || null;
+            sessionData.compName = msg.name || null;
+            sessionData.compDesc = msg.description || null;
+          } else if (launchMode === 'FLOW') {
+            sessionData.moduleId = msg.moduleId;
+            sessionData.flowId = msg.flowId || null;
+            sessionData.existingFlow = msg.existingFlow || null;
+            sessionData.csvPath = msg.csvPath || null;
+          } else {
+            // Default (RUN)
+            sessionData.moduleId = msg.moduleId;
+            sessionData.runId = msg.runId || null;
+            sessionData.existingRun = msg.existingRun || null;
+            sessionData.csvPath = msg.csvPath || null;
+          }
+
+          chrome.storage.local.set(sessionData).then(() => {
             const launchMode = msg.flag || msg.mode || 'RUN';
-            const sidePanelPath = launchMode === 'FLOW' ? 'popup/flow.html' : 'popup/popup.html';
+            let sidePanelPath = 'popup/popup.html';
+            if (launchMode === 'FLOW') {
+                sidePanelPath = 'popup/flow.html';
+            } else if (launchMode === 'COMPONENT') {
+                sidePanelPath = 'popup/component.html';
+            }
             return chrome.sidePanel.setOptions({ path: sidePanelPath });
           }).then(() => {
-            return chrome.storage.local.remove(['flow_draft']); // Clear local draft on fresh server launch
+            return chrome.storage.local.remove(['flow_draft', 'component_draft']); // Clear local draft on fresh server launch
           }).then(() => {
             notifyPopup({ type: 'RELOAD_SESSION' });
             

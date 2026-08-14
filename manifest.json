@@ -71,6 +71,7 @@
     {
       "resources": ["popup/popup.html", "popup/popup.css", "popup/popup.js",
                     "popup/flow.html", "popup/flow.css", "popup/flow.js",
+                    "popup/component.html", "popup/component.css", "popup/component.js",
                     "scenario-builder/schema.js", "storage/storage.js",
                     "api/api-client.js", "content/ui-injector.css", "assets/*.png"],
       "matches": ["<all_urls>"]
