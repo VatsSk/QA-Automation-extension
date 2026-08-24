@@ -130,4 +130,78 @@
     chrome.runtime.sendMessage({ type: 'URL_CAPTURED', data: e.detail });
   });
 
+  // ── URL Change Detection ────────────────────────────────────────────────
+  let lastKnownUrl = window.location.href;
+  let urlChangeDebounceTimer = null;
+  
+  function handleUrlChange(newUrl) {
+    if (newUrl === lastKnownUrl) return;
+    lastKnownUrl = newUrl;
+    
+    clearTimeout(urlChangeDebounceTimer);
+    urlChangeDebounceTimer = setTimeout(() => {
+      chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (state) => {
+        if (state && state.isRecording && !state.isPaused) {
+          const stepData = {
+            action: 'URL_CHANGE',
+            url: newUrl,
+            target: { cssSelector: 'URL_CHANGE' },
+            value: newUrl,
+            timestamp: Date.now()
+          };
+          // Dispatch locally so it goes through the normal STEP_RECORDED flow
+          document.dispatchEvent(new CustomEvent('qa-step-recorded', { detail: stepData }));
+          chrome.runtime.sendMessage({ type: 'UPDATE_LAST_URL', url: newUrl });
+        }
+      });
+    }, 500); // 500ms stabilization debounce
+  }
+
+  // Intercept SPA navigations
+  const originalPushState = history.pushState;
+  history.pushState = function() {
+    originalPushState.apply(history, arguments);
+    handleUrlChange(window.location.href);
+  };
+
+  const originalReplaceState = history.replaceState;
+  history.replaceState = function() {
+    originalReplaceState.apply(history, arguments);
+    handleUrlChange(window.location.href);
+  };
+
+  window.addEventListener('popstate', () => handleUrlChange(window.location.href));
+  
+  // Polling for framework routers that bypass history API completely
+  let pollingInterval = setInterval(() => {
+    if (window.location.href !== lastKnownUrl) {
+      handleUrlChange(window.location.href);
+    }
+  }, 1000);
+  
+  const originalCleanup = window.__qaContentCleanup;
+  window.__qaContentCleanup = function () {
+    if (originalCleanup) originalCleanup();
+    clearInterval(pollingInterval);
+    // Note: restoring pushState/replaceState can be tricky, we leave it since it wraps safely
+  };
+
+  // On full-page load/navigation, detect if URL changed from last known background state
+  chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (state) => {
+    if (state && state.isRecording && !state.isPaused && state.lastUrl) {
+      if (state.lastUrl !== window.location.href) {
+        lastKnownUrl = window.location.href; // update local before dispatching
+        const stepData = {
+          action: 'URL_CHANGE',
+          url: window.location.href,
+          target: { cssSelector: 'URL_CHANGE' },
+          value: window.location.href,
+          timestamp: Date.now()
+        };
+        document.dispatchEvent(new CustomEvent('qa-step-recorded', { detail: stepData }));
+        chrome.runtime.sendMessage({ type: 'UPDATE_LAST_URL', url: window.location.href });
+      }
+    }
+  });
+
 })();

@@ -35,7 +35,8 @@ let recordingState = {
   isPaused: false,
   isVerification: false,
   isHoverCapture: false,
-  lockedTabId: null    // When recording, we lock to this specific tab
+  lockedTabId: null,    // When recording, we lock to this specific tab
+  lastUrl: null
 };
 
 // ── Persist / restore state across service-worker restarts ───────────────────
@@ -281,7 +282,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       recordingState.isRecording = true;
       recordingState.isPaused = false;
       recordingState.lockedTabId = targetTabId;
-      persistWindowState();
+      
+      chrome.tabs.get(targetTabId, (tab) => {
+        if (tab && tab.url) {
+          recordingState.lastUrl = tab.url;
+        }
+        persistWindowState();
+      });
 
       ensureContentScript(targetTabId)
         .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
@@ -302,6 +309,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (targetTabId) {
         chrome.tabs.sendMessage(targetTabId, { type: msg.type }).catch(() => {});
       }
+      sendResponse({ ok: true });
+      break;
+    }
+
+    case 'GET_RECORDING_STATE': {
+      sendResponse(recordingState);
+      break;
+    }
+
+    case 'UPDATE_LAST_URL': {
+      recordingState.lastUrl = msg.url;
+      persistWindowState();
       sendResponse({ ok: true });
       break;
     }

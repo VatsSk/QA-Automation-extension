@@ -4,6 +4,7 @@
 let state = {
   flowName: 'New Flow',
   defaultWait: 5,
+  urlChangeWait: 2000,
   steps: [],
   isRecording: false,
   isPaused: false,
@@ -28,6 +29,7 @@ const els = {
   recordingStatus: document.getElementById('recording-status'),
   stepCount: document.getElementById('step-count'),
   defaultWait: document.getElementById('default-wait-input'),
+  urlChangeWait: document.getElementById('url-change-wait-input'),
   verificationBanner: document.getElementById('verification-banner'),
   timelineSteps: document.getElementById('timeline-steps'),
   emptyState: document.getElementById('empty-state'),
@@ -108,6 +110,7 @@ async function loadSession() {
   ) {
     state.flowName = draft.flowName || 'New Flow';
     state.defaultWait = draft.defaultWait ?? 5;
+    state.urlChangeWait = draft.urlChangeWait ?? 2000;
     state.steps = draft.steps || [];
     state.flowId = draft.flowId || data.flowId;
     return; // draft wins — don't overwrite with existingFlow
@@ -116,6 +119,7 @@ async function loadSession() {
   if (data.existingFlow) {
     state.flowName = data.existingFlow.name || 'Edit Flow';
     state.defaultWait = data.existingFlow.defaultWait ? (data.existingFlow.defaultWait / 1000) : 5;
+    state.urlChangeWait = data.existingFlow.urlChangeWait ?? 2000;
     state.steps = data.existingFlow.steps ? data.existingFlow.steps.map(mapBackendStepToLocal) : [];
   } else {
     // New flow: add default navigate step
@@ -408,6 +412,7 @@ function persistDraft() {
     flowId: state.flowId,
     flowName: state.flowName,
     defaultWait: state.defaultWait,
+    urlChangeWait: state.urlChangeWait,
     steps: state.steps
   };
   chrome.storage.local.set({ flow_draft: draft });
@@ -442,7 +447,8 @@ window.addEventListener('beforeunload', () => {
 function mapLocalStepToBackend(step, index) {
   const actionTypeMap = {
     navigate: 'NAVIGATE', click: 'CLICK', type: 'TYPE', select: 'SELECT',
-    checkbox: 'CHECKBOX', upload: 'FILE_UPLOAD', date: 'DATE', hover: 'HOVER', verify: 'VERIFY'
+    checkbox: 'CHECKBOX', upload: 'FILE_UPLOAD', date: 'DATE', hover: 'HOVER', verify: 'VERIFY',
+    URL_CHANGE: 'URL_CHANGE'
   };
   const verTypeMap = {
     'Visible': 'VISIBLE', 'Exists': 'EXISTS', 'Image Source': 'IMAGE', 'Alt Text': 'ATTRIBUTE',
@@ -450,6 +456,22 @@ function mapLocalStepToBackend(step, index) {
   };
 
   const isVerify = step.type === 'verify';
+  const isUrlChange = step.type === 'URL_CHANGE';
+  
+  if (isUrlChange) {
+    return {
+      stepOrder: index + 1,
+      name: `Step ${index + 1}`,
+      actionType: 'URL_CHANGE',
+      url: step.url,
+      wait: step.wait != null ? step.wait : (parseInt(state.urlChangeWait, 10) || 2000),
+      overrideWait: step.advanced && step.advanced.overrideWait ? true : false,
+      retryCount: parseInt(step.advanced && step.advanced.retryCount) || 0,
+      continueOnFailure: step.advanced ? step.advanced.continueOnFailure : false,
+      captureScreenshot: step.advanced ? step.advanced.captureScreenshot : false
+    };
+  }
+
   return {
     stepOrder: index + 1,
     name: `Step ${index + 1}`,
@@ -471,12 +493,28 @@ function mapLocalStepToBackend(step, index) {
 function mapBackendStepToLocal(bStep) {
   const localTypeMap = {
     NAVIGATE: 'navigate', CLICK: 'click', TYPE: 'type', SELECT: 'select',
-    CHECKBOX: 'checkbox', FILE_UPLOAD: 'upload', DATE: 'date', HOVER: 'hover', VERIFY: 'verify'
+    CHECKBOX: 'checkbox', FILE_UPLOAD: 'upload', DATE: 'date', HOVER: 'hover', VERIFY: 'verify',
+    URL_CHANGE: 'URL_CHANGE'
   };
   const localVerMap = {
     VISIBLE: 'Visible', EXISTS: 'Exists', IMAGE: 'Image Source', ATTRIBUTE: 'Alt Text',
     VALUE: 'Value', ENABLED: 'Enabled', DISABLED: 'Disabled', CHECKED: 'Checked', UNCHECKED: 'Unchecked', TEXT: 'Text Equals'
   };
+
+  if (bStep.actionType === 'URL_CHANGE') {
+    return {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      type: 'URL_CHANGE',
+      url: bStep.url || bStep.value,
+      wait: bStep.wait != null ? bStep.wait : (parseInt(state.urlChangeWait, 10) || 2000),
+      advanced: {
+        overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
+        retryCount: bStep.retryCount || 0,
+        continueOnFailure: bStep.continueOnFailure || false,
+        captureScreenshot: bStep.captureScreenshot ?? true
+      }
+    };
+  }
 
   return {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -499,6 +537,7 @@ function mapActionToStepType(data) {
   const tag = (data.target.tag || '').toLowerCase();
   const inputType = (data.target.attributes?.type || '').toLowerCase();
   
+  if (data.action === 'URL_CHANGE') return 'URL_CHANGE';
   if (data.action === 'navigate') return 'navigate';
   if (data.action === 'hover') return 'hover';
   if (data.action === 'type' || data.action === 'keydown') return 'type';
@@ -565,6 +604,11 @@ function addStepFromCapture(data) {
     value: value,
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
+  
+  if (type === 'URL_CHANGE') {
+    step.url = data.url;
+    step.wait = parseInt(state.urlChangeWait, 10) || 2000;
+  }
   
   pushState();
   if (_captureInsertIndex !== null) {
@@ -663,6 +707,7 @@ function render() {
   els.flowName.value = state.flowName;
   els.stepCount.textContent = `${state.steps.length} Steps Recorded`;
   els.defaultWait.value = state.defaultWait;
+  els.urlChangeWait.value = state.urlChangeWait;
   
   if (state.steps.length === 0) {
     els.emptyState.classList.remove('hidden');
@@ -740,7 +785,8 @@ function getStepConfig(type) {
     upload:   { icon: '📂', title: 'Upload' },
     date:     { icon: '📅', title: 'Date Picker' },
     verify:   { icon: '🔍', title: 'Verify' },
-    wait:     { icon: '⏳', title: 'Wait' }
+    wait:     { icon: '⏳', title: 'Wait' },
+    URL_CHANGE: { icon: '🔗', title: 'URL Changed' }
   };
   return configs[type] || { icon: '⚡', title: 'Action' };
 }
@@ -856,6 +902,9 @@ function createStepCard(step, index) {
   
   if (step.type === 'navigate') {
     body.appendChild(createFieldRow('URL', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
+  } else if (step.type === 'URL_CHANGE') {
+    body.appendChild(createFieldRow('URL', `<input type="text" class="step-input value-update" data-field="url" value="${esc(step.url)}">`));
+    body.appendChild(createFieldRow('Wait (ms)', `<input type="number" class="step-input value-update" data-field="wait" value="${step.wait}">`));
   } else {
     body.appendChild(createFieldRow('Selector', `<input type="text" class="step-input value-update" data-field="selector" value="${esc(step.selector)}">`));
   }
@@ -924,7 +973,11 @@ function bindCardEvents(card, step, index) {
   card.querySelectorAll('.value-update').forEach(input => {
     input.addEventListener('change', (e) => {
       pushState();
-      step[e.target.dataset.field] = e.target.value;
+      if (e.target.dataset.field === 'wait') {
+        step[e.target.dataset.field] = parseInt(e.target.value, 10) || 0;
+      } else {
+        step[e.target.dataset.field] = e.target.value;
+      }
       if (e.target.dataset.field === 'verificationType') {
         render(); // re-render to show/hide Expected value field
       }
@@ -970,6 +1023,7 @@ function bindCardEvents(card, step, index) {
 function bindGlobalEvents() {
   els.flowName.addEventListener('change', (e) => { state.flowName = e.target.value; scheduleAutoSave(); });
   els.defaultWait.addEventListener('change', (e) => { state.defaultWait = e.target.value; scheduleAutoSave(); });
+  els.urlChangeWait.addEventListener('change', (e) => { state.urlChangeWait = parseInt(e.target.value, 10) || 2000; scheduleAutoSave(); });
   
   els.btnUndo.addEventListener('click', undo);
   els.btnRedo.addEventListener('click', redo);
@@ -1029,6 +1083,7 @@ function bindGlobalEvents() {
       name: state.flowName,
       description: 'Recorded Flow',
       defaultWait: (parseFloat(state.defaultWait) || 5) * 1000,
+      urlChangeWait: parseInt(state.urlChangeWait, 10) || 2000,
       status: 'DRAFT',
       steps: state.steps.map(mapLocalStepToBackend)
     };
