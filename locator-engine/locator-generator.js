@@ -267,17 +267,23 @@
 
       const labelledBy = el.getAttribute('aria-labelledby');
       if (labelledBy) {
-        const labEl = document.getElementById(labelledBy);
-        if (labEl) {
-          const text = labEl.textContent.trim();
-          const sel = `[aria-labelledby="${escapeAttr(labelledBy)}"]`;
-          if (isUniqueCss(sel)) {
-            candidates.push({ 
-              type: 'aria-labelledby', 
-              value: sel, 
-              score: 85, 
-              note: `Labels: "${text.slice(0, 30)}${text.length > 30 ? '...' : ''}"` 
-            });
+        // Validate that the referenced ID(s) in aria-labelledby are stable
+        const ids = labelledBy.split(/\s+/).filter(Boolean);
+        const allStable = ids.length > 0 && ids.every(id => isStableId(id));
+        
+        if (allStable) {
+          const labEl = document.getElementById(ids[0]);
+          if (labEl) {
+            const text = labEl.textContent.trim();
+            const sel = `[aria-labelledby="${escapeAttr(labelledBy)}"]`;
+            if (isUniqueCss(sel)) {
+              candidates.push({ 
+                type: 'aria-labelledby', 
+                value: sel, 
+                score: 85, 
+                note: `Labels: "${text.slice(0, 30)}${text.length > 30 ? '...' : ''}"` 
+              });
+            }
           }
         }
       }
