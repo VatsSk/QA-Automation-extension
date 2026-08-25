@@ -204,13 +204,21 @@ chrome.runtime.onMessageExternal.addListener(
             mode: launchMode
           };
 
-          if (launchMode === 'COMPONENT') {
+          if (launchMode === 'COMPONENT' || launchMode === 'EDIT_COMPONENT') {
             console.log("[SW] Launching Component Recorder");
             console.log("[SW] Captured compModuleId from web:", msg.compModuleId);
             sessionData.compModuleId = msg.compModuleId;
             sessionData.compId = msg.compId || null;
             sessionData.compName = msg.name || null;
             sessionData.compDesc = msg.description || null;
+            
+            if (launchMode === 'EDIT_COMPONENT') {
+              sessionData.existingComponent = {
+                name: msg.name,
+                defaultWait: 5000,
+                steps: msg.steps || []
+              };
+            }
           } else if (launchMode === 'FLOW') {
             sessionData.moduleId = msg.moduleId;
             sessionData.flowId = msg.flowId || null;
@@ -224,17 +232,17 @@ chrome.runtime.onMessageExternal.addListener(
             sessionData.csvPath = msg.csvPath || null;
           }
 
-          chrome.storage.local.set(sessionData).then(() => {
+          chrome.storage.local.remove(['flow_draft', 'component_draft', 'existingComponent', 'existingFlow', 'existingRun']).then(() => {
+            return chrome.storage.local.set(sessionData);
+          }).then(() => {
             const launchMode = msg.flag || msg.mode || 'RUN';
             let sidePanelPath = 'popup/popup.html';
             if (launchMode === 'FLOW') {
                 sidePanelPath = 'popup/flow.html';
-            } else if (launchMode === 'COMPONENT') {
+            } else if (launchMode === 'COMPONENT' || launchMode === 'EDIT_COMPONENT') {
                 sidePanelPath = 'popup/component.html';
             }
             return chrome.sidePanel.setOptions({ path: sidePanelPath });
-          }).then(() => {
-            return chrome.storage.local.remove(['flow_draft', 'component_draft']); // Clear local draft on fresh server launch
           }).then(() => {
             notifyPopup({ type: 'RELOAD_SESSION' });
             

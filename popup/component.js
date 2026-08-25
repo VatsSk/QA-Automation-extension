@@ -121,7 +121,8 @@ async function loadSession() {
   if (data.existingComponent) {
     state.compName = data.existingComponent.name || 'Edit Component';
     state.defaultWait = data.existingComponent.defaultWait ? (data.existingComponent.defaultWait / 1000) : 5;
-    state.steps = data.existingComponent.steps ? data.existingComponent.steps.map(mapBackendStepToLocal) : [];
+    const backendSteps = data.existingComponent.flowSteps || data.existingComponent.flowStep || data.existingComponent.steps || [];
+    state.steps = backendSteps.map(mapBackendStepToLocal);
   } else {
     // New component: add default navigate step
     state.compName = initialCompName;
