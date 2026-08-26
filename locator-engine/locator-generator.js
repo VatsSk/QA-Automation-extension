@@ -79,7 +79,8 @@
   }
 
   function escapeAttr(value) {
-    return value.replace(/"/g, '\\"');
+    if (value == null) return '';
+    return String(value).replace(/"/g, '\\"');
   }
 
   function removeDuplicateCandidates(candidates) {
