@@ -484,9 +484,9 @@ function mapLocalStepToBackend(step, index) {
     NEW_TAB_OPENED: 'SWITCH_TO_NEW_TAB', TAB_LOAD_TIMEOUT: 'TAB_LOAD_TIMEOUT', SWITCH_TAB: 'SWITCH_TAB'
   };
   const verTypeMap = {
-    'Visible': 'VISIBLE', 'Exists': 'EXISTS', 'Image Source': 'IMAGE', 'Alt Text': 'ATTRIBUTE',
+    'Visible': 'VISIBLE', 'Not Visible': 'NOT_VISIBLE', 'Exists': 'EXISTS', 'Not Exists': 'NOT_EXISTS', 'Image Source': 'IMAGE', 'Alt Text': 'ATTRIBUTE',
     'Value': 'VALUE', 'Enabled': 'ENABLED', 'Disabled': 'DISABLED', 'Checked': 'CHECKED', 'Unchecked': 'UNCHECKED', 'Text Equals': 'TEXT',
-    'Contains': 'CONTAINS', 'Text Not Equals': 'NOT_EQUALS', 'Tooltip Text': 'TOOLTIP'
+    'Contains': 'CONTAINS', 'Text Not Equals': 'NOT_EQUALS', 'Tooltip Text': 'TOOLTIP', 'Selected Value': 'SELECTED_VALUE'
   };
 
   const isVerify = step.type === 'verify';
@@ -520,9 +520,9 @@ function mapBackendStepToLocal(bStep) {
     NEW_TAB_OPENED: 'NEW_TAB_OPENED', SWITCH_TO_NEW_TAB: 'NEW_TAB_OPENED', TAB_LOAD_TIMEOUT: 'TAB_LOAD_TIMEOUT', SWITCH_TAB: 'SWITCH_TAB'
   };
   const localVerMap = {
-    VISIBLE: 'Visible', EXISTS: 'Exists', IMAGE: 'Image Source', ATTRIBUTE: 'Alt Text',
+    VISIBLE: 'Visible', NOT_VISIBLE: 'Not Visible', EXISTS: 'Exists', NOT_EXISTS: 'Not Exists', IMAGE: 'Image Source', ATTRIBUTE: 'Alt Text',
     VALUE: 'Value', ENABLED: 'Enabled', DISABLED: 'Disabled', CHECKED: 'Checked', UNCHECKED: 'Unchecked', TEXT: 'Text Equals',
-    CONTAINS: 'Contains', NOT_EQUALS: 'Text Not Equals', TOOLTIP: 'Tooltip Text'
+    CONTAINS: 'Contains', NOT_EQUALS: 'Text Not Equals', TOOLTIP: 'Tooltip Text', SELECTED_VALUE: 'Selected Value'
   };
 
   return {
@@ -957,7 +957,7 @@ function createStepCard(step, index) {
   } else if (step.type === 'verify') {
     body.appendChild(createFieldRow('Type', `
       <select class="step-input value-update" data-field="verificationType">
-        ${['Visible', 'Exists', 'Image Source', 'Alt Text', 'Value', 'Enabled', 'Disabled', 'Checked', 'Unchecked', 'Selected Value', 'Text Equals', 'Contains', 'Text Not Equals', 'Tooltip Text']
+        ${['Visible', 'Not Visible', 'Exists', 'Not Exists', 'Image Source', 'Alt Text', 'Value', 'Enabled', 'Disabled', 'Checked', 'Unchecked', 'Selected Value', 'Text Equals', 'Contains', 'Text Not Equals', 'Tooltip Text']
           .map(opt => `<option value="${opt}" ${step.verificationType === opt ? 'selected' : ''}>${opt}</option>`).join('')}
       </select>
     `));
