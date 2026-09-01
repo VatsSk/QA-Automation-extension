@@ -11,6 +11,61 @@
   }
   window.__qaContentLoaded = true;
 
+  // ── Frame Path Discovery ──────────────────────────────────────────────────
+  let framePath = [];
+  
+  if (window !== window.top) {
+    // We are in an iframe. Ask parent for our locator.
+    window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR' }, '*');
+  }
+
+  const frameMessageHandler = (event) => {
+    if (event.data && event.data.type === 'QA_EXTENSION_GET_IFRAME_LOCATOR') {
+      // A child iframe is asking for its locator
+      const childWindow = event.source;
+      const iframes = document.querySelectorAll('iframe, frame');
+      let iframeElement = null;
+      let index = -1;
+      for (let i = 0; i < iframes.length; i++) {
+        if (iframes[i].contentWindow === childWindow) {
+          iframeElement = iframes[i];
+          index = i;
+          break;
+        }
+      }
+      
+      if (iframeElement && window.LocatorGenerator) {
+        const loc = window.LocatorGenerator.generate(iframeElement);
+        const info = window.LocatorGenerator.getElementInfo(iframeElement);
+        const frameLocator = {
+          selector: loc.bestLocator,
+          selectorType: 'css',
+          index: index,
+          id: info.id || null,
+          name: info.name || null,
+          title: iframeElement.getAttribute('title') || null,
+          src: iframeElement.src || null
+        };
+        
+        const fullPath = [...framePath, frameLocator];
+        childWindow.postMessage({ type: 'QA_EXTENSION_SET_FRAME_PATH', framePath: fullPath }, '*');
+      }
+    } else if (event.data && event.data.type === 'QA_EXTENSION_SET_FRAME_PATH') {
+      framePath = event.data.framePath;
+      if (window.QAOverlay) {
+        window.QAOverlay.framePath = framePath;
+      }
+      // Propagate to any children that might have asked before we got our path
+      const iframes = document.querySelectorAll('iframe, frame');
+      iframes.forEach(iframe => {
+        if (iframe.contentWindow) {
+          iframe.contentWindow.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR' }, '*');
+        }
+      });
+    }
+  };
+  window.addEventListener('message', frameMessageHandler);
+
   // Store references to event listeners so we can remove them on re-injection
   let stepRecordedHandler = null;
   let elementCapturedHandler = null;
@@ -123,6 +178,7 @@
     if (stepRecordedHandler) document.removeEventListener('qa-step-recorded', stepRecordedHandler);
     if (elementCapturedHandler) document.removeEventListener('qa-element-captured', elementCapturedHandler);
     if (shortcutHandler) document.removeEventListener('qa-ext-shortcut', shortcutHandler);
+    window.removeEventListener('message', frameMessageHandler);
   };
 
   document.addEventListener('qa-url-captured', (e) => {

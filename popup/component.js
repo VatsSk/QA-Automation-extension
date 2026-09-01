@@ -471,7 +471,8 @@ function mapLocalStepToBackend(step, index) {
     retryCount: (step.advanced && parseInt(step.advanced.retryCount)) || 0,
     continueOnFailure: !!(step.advanced && step.advanced.continueOnFailure),
     captureScreenshot: step.advanced ? step.advanced.captureScreenshot : true,
-    isComp: true
+    isComp: true,
+    framePath: step.framePath || []
   };
 }
 
@@ -492,6 +493,7 @@ function mapBackendStepToLocal(bStep) {
     verificationType: bStep.actionType === 'VERIFY' ? (localVerMap[bStep.verificationType] || 'Visible') : null,
     value: bStep.actionType === 'VERIFY' ? (bStep.expectedValue || '') : (bStep.value || ''),
     textSource: bStep.textSource || 'text',
+    framePath: bStep.framePath || [],
     advanced: {
       overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
       retryCount: bStep.retryCount || 0,
@@ -570,6 +572,7 @@ function addStepFromCapture(data) {
     type: type,
     selector: selector,
     value: value,
+    framePath: data.framePath || [],
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
   
@@ -636,6 +639,7 @@ function addVerificationStep(elData) {
     verificationType: verType,
     value: expectedValue,
     textSource: textSource,
+    framePath: elData.framePath || [],
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
   

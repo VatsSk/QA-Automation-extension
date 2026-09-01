@@ -289,7 +289,8 @@
         attributes: { type: info.type }
       },
       value: value,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      framePath: window.QAOverlay.framePath || []
     };
 
     console.log('[Overlay] Dispatching step:', {
@@ -423,7 +424,8 @@
             attributes: { type: info.type }
           },
           value: '',
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          framePath: window.QAOverlay.framePath || []
         };
         document.dispatchEvent(new CustomEvent('qa-step-recorded', { detail: data }));
         
@@ -452,7 +454,8 @@
             value: info.value || '',
             checked: el.checked,
             placeholder: info.placeholder || '',
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            framePath: window.QAOverlay.framePath || []
           };
           document.dispatchEvent(new CustomEvent('qa-element-captured', { detail: data }));
         }
@@ -556,6 +559,7 @@
       if (window.LocatorGenerator) {
         result.elementInfo = window.LocatorGenerator.getElementInfo(el);
       }
+      result.framePath = window.QAOverlay.framePath || [];
     } catch (err) {
       console.error('[QA] Extraction failed:', err);
     } finally {

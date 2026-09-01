@@ -509,7 +509,8 @@ function mapLocalStepToBackend(step, index) {
     fromTabRef: step.fromTabRef || null,
     toTabRef: step.toTabRef || null,
     message: step.message || null,
-    triggeringElement: step.triggeringElement || null
+    triggeringElement: step.triggeringElement || null,
+    framePath: step.framePath || []
   };
 }
 
@@ -537,6 +538,7 @@ function mapBackendStepToLocal(bStep) {
     toTabRef: bStep.toTabRef || null,
     message: bStep.message || null,
     triggeringElement: bStep.triggeringElement || null,
+    framePath: bStep.framePath || [],
     advanced: {
       overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
       retryCount: bStep.retryCount || 0,
@@ -630,6 +632,7 @@ function addStepFromCapture(data) {
     toTabRef: data.toTabRef,
     message: data.message,
     triggeringElement: data.triggeringElement,
+    framePath: data.framePath || [],
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
 
@@ -702,6 +705,7 @@ function addVerificationStep(elData) {
     verificationType: verType,
     value: expectedValue,
     textSource: textSource,
+    framePath: elData.framePath || [],
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
   

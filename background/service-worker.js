@@ -638,11 +638,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 const injectionPromises = new Map();
 
-async function ensureContentScript(tabId) {
+async function ensureContentScript(tabId, frameId = 0) {
   if (!tabId) return;
 
-  if (injectionPromises.has(tabId)) {
-    return injectionPromises.get(tabId);
+  const promiseKey = `${tabId}-${frameId}`;
+  if (injectionPromises.has(promiseKey)) {
+    return injectionPromises.get(promiseKey);
   }
 
   const promise = (async () => {
@@ -670,15 +671,17 @@ async function ensureContentScript(tabId) {
 
     // ── Ping first — if content script is already alive, no need to re-inject ─
     try {
-      await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+      await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId });
       return; // already injected and responsive
     } catch (_) {
       // Not injected yet — fall through to injection
     }
 
+    const target = frameId === 0 ? { tabId, allFrames: true } : { tabId, frameIds: [frameId] };
+
     // ── Inject all content files ──────────────────────────────────────────────
     await chrome.scripting.insertCSS({
-      target: { tabId },
+      target,
       files: ['content/overlay.css']
     }).catch((e) => console.warn('[QA] CSS inject failed:', e.message));
 
@@ -687,7 +690,7 @@ async function ensureContentScript(tabId) {
       'content/overlay.js',
       'content/content.js'
     ]) {
-      await chrome.scripting.executeScript({ target: { tabId }, files: [file] });
+      await chrome.scripting.executeScript({ target, files: [file] });
     }
 
     // ── Verify the scripts are actually live with a post-inject PING ──────────
@@ -695,7 +698,7 @@ async function ensureContentScript(tabId) {
     let alive = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+        await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId });
         alive = true;
         break;
       } catch (_) {
@@ -707,11 +710,11 @@ async function ensureContentScript(tabId) {
     }
   })();
 
-  injectionPromises.set(tabId, promise);
+  injectionPromises.set(promiseKey, promise);
   try {
     await promise;
   } finally {
-    injectionPromises.delete(tabId);
+    injectionPromises.delete(promiseKey);
   }
 }
 
@@ -825,12 +828,13 @@ chrome.tabs.onCreated.addListener((newTab) => {
 });
 
 chrome.webNavigation.onCompleted.addListener((details) => {
-  if (details.frameId !== 0) return; // main frame only
   const state = recordingState.get(details.tabId);
   if (state?.isRecording) {
-    clearInjectionWatch(details.tabId);
+    if (details.frameId === 0) {
+      clearInjectionWatch(details.tabId);
+    }
     ensureContentScript(details.tabId)
-      .then(() => chrome.tabs.sendMessage(details.tabId, { type: 'START_RECORDING' }))
+      .then(() => chrome.tabs.sendMessage(details.tabId, { type: 'START_RECORDING' }, { frameId: details.frameId }))
       .catch(() => {});
   }
 });

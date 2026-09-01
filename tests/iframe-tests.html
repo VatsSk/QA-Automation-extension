@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Iframe Tests</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        iframe { border: 2px solid #ccc; margin: 10px 0; width: 300px; height: 150px; }
+        .test-case { margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Iframe Test Cases</h1>
+    
+    <div class="test-case" id="test1">
+        <h2>Test 1 — normal page</h2>
+        <button id="normal-button">Click Me</button>
+    </div>
+
+    <div class="test-case" id="test2">
+        <h2>Test 2 — one iframe</h2>
+        <iframe id="iframe-single" src="iframe-single.html"></iframe>
+    </div>
+
+    <div class="test-case" id="test3">
+        <h2>Test 3 — nested iframe</h2>
+        <iframe id="iframe-outer" src="iframe-outer.html"></iframe>
+    </div>
+
+    <div class="test-case" id="test4">
+        <h2>Test 4 — multiple sibling iframes</h2>
+        <iframe id="iframe-sibling-a" src="iframe-sibling-a.html"></iframe>
+        <iframe id="iframe-sibling-b" src="iframe-sibling-b.html"></iframe>
+    </div>
+
+    <div class="test-case" id="test5">
+        <h2>Test 5 — dynamic iframe</h2>
+        <button id="add-dynamic" onclick="addDynamicIframe()">Add Dynamic Iframe</button>
+        <div id="dynamic-container"></div>
+    </div>
+
+    <script>
+        function addDynamicIframe() {
+            const container = document.getElementById('dynamic-container');
+            const iframe = document.createElement('iframe');
+            iframe.id = 'iframe-dynamic';
+            iframe.src = 'iframe-dynamic.html';
+            container.appendChild(iframe);
+        }
+    </script>
+</body>
+</html>
