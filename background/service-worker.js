@@ -166,18 +166,18 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         // Restore the recording state on the freshly injected scripts
         // Small delay to let scripts fully initialize
         await new Promise(r => setTimeout(r, 200));
-        await chrome.tabs.sendMessage(tabId, { type: 'START_RECORDING' }).catch(() => {});
+        await broadcastToAllFrames(tabId, { type: 'START_RECORDING' });
 
-        if (recordingState.isVerification) {
+        if (state.isVerification) {
           await new Promise(r => setTimeout(r, 100));
-          await chrome.tabs.sendMessage(tabId, { type: 'START_VERIFICATION' }).catch(() => {});
+          await broadcastToAllFrames(tabId, { type: 'START_VERIFICATION' });
         }
-        if (recordingState.isHoverCapture) {
+        if (state.isHoverCapture) {
           await new Promise(r => setTimeout(r, 100));
-          await chrome.tabs.sendMessage(tabId, { type: 'START_HOVER_CAPTURE' }).catch(() => {});
+          await broadcastToAllFrames(tabId, { type: 'START_HOVER_CAPTURE' });
         }
-        if (recordingState.isPaused) {
-          await chrome.tabs.sendMessage(tabId, { type: 'PAUSE_RECORDING' }).catch(() => {});
+        if (state.isPaused) {
+          await broadcastToAllFrames(tabId, { type: 'PAUSE_RECORDING' });
         }
 
         console.log('[SW] Content scripts re-injected and recording state restored.');
@@ -327,6 +327,18 @@ chrome.runtime.onMessageExternal.addListener(
   }
 );
 
+function broadcastToAllFrames(tabId, message) {
+  if (!tabId) return;
+  chrome.webNavigation.getAllFrames({ tabId }, (frames) => {
+    if (!frames) {
+      chrome.tabs.sendMessage(tabId, message).catch(() => {});
+      return;
+    }
+    for (const frame of frames) {
+      chrome.tabs.sendMessage(tabId, message, { frameId: frame.frameId }).catch(() => {});
+    }
+  });
+}
 
 // ── Message bus ──────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -365,7 +377,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       persistWindowState();
 
       ensureContentScript(targetTabId)
-        .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
+        .then(() => broadcastToAllFrames(targetTabId, { type: msg.type }))
         .catch(() => {});
       sendResponse({ ok: true });
       return true;
@@ -384,7 +396,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       persistWindowState();
 
       for (const tId of tabsToStop) {
-        chrome.tabs.sendMessage(tId, { type: msg.type }).catch(() => {});
+        broadcastToAllFrames(tId, { type: msg.type });
       }
       sendResponse({ ok: true });
       break;
@@ -411,7 +423,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       for (const tId of tabsToPause) {
         ensureContentScript(tId)
-          .then(() => chrome.tabs.sendMessage(tId, { type: msg.type }))
+          .then(() => broadcastToAllFrames(tId, { type: msg.type }))
           .catch(() => {});
       }
 
@@ -425,7 +437,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       if (targetTabId) {
         ensureContentScript(targetTabId)
-          .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
+          .then(() => broadcastToAllFrames(targetTabId, { type: msg.type }))
           .catch(() => {});
       }
       sendResponse({ ok: true });
@@ -437,7 +449,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       persistWindowState();
 
       if (targetTabId) {
-        chrome.tabs.sendMessage(targetTabId, { type: msg.type }).catch(() => {});
+        broadcastToAllFrames(targetTabId, { type: msg.type });
       }
       sendResponse({ ok: true });
       break;
@@ -449,7 +461,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       if (targetTabId) {
         ensureContentScript(targetTabId)
-          .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
+          .then(() => broadcastToAllFrames(targetTabId, { type: msg.type }))
           .catch(() => {});
       }
       sendResponse({ ok: true });
@@ -461,7 +473,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       persistWindowState();
 
       if (targetTabId) {
-        chrome.tabs.sendMessage(targetTabId, { type: msg.type }).catch(() => {});
+        broadcastToAllFrames(targetTabId, { type: msg.type });
       }
       sendResponse({ ok: true });
       break;
@@ -506,7 +518,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       }
       ensureContentScript(targetTabId)
-        .then(() => chrome.tabs.sendMessage(targetTabId, {
+        .then(() => broadcastToAllFrames(targetTabId, {
           type: 'START_CAPTURE',
           captureMode: msg.captureMode   // 'LOCATOR' | 'VALUE' | 'BOTH'
         }))
@@ -527,7 +539,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Popup cancels capture
     case 'STOP_CAPTURE': {
       if (targetTabId) {
-        chrome.tabs.sendMessage(targetTabId, { type: 'STOP_CAPTURE' }).catch(() => {});
+        broadcastToAllFrames(targetTabId, { type: 'STOP_CAPTURE' });
       }
       sendResponse({ ok: true });
       break;
