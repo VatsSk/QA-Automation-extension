@@ -19,6 +19,15 @@
     window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR' }, '*');
   }
 
+  const notifyChildren = () => {
+    const iframes = document.querySelectorAll('iframe, frame');
+    iframes.forEach(iframe => {
+      if (iframe.contentWindow) {
+        iframe.contentWindow.postMessage({ type: 'QA_EXTENSION_PARENT_READY' }, '*');
+      }
+    });
+  };
+
   const frameMessageHandler = (event) => {
     if (event.data && event.data.type === 'QA_EXTENSION_GET_IFRAME_LOCATOR') {
       // A child iframe is asking for its locator
@@ -55,16 +64,18 @@
       if (window.QAOverlay) {
         window.QAOverlay.framePath = framePath;
       }
-      // Propagate to any children that might have asked before we got our path
-      const iframes = document.querySelectorAll('iframe, frame');
-      iframes.forEach(iframe => {
-        if (iframe.contentWindow) {
-          iframe.contentWindow.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR' }, '*');
-        }
-      });
+      // Propagate to any children that might have asked before we got our full path
+      notifyChildren();
+    } else if (event.data && event.data.type === 'QA_EXTENSION_PARENT_READY') {
+      if (window !== window.top) {
+        window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR' }, '*');
+      }
     }
   };
   window.addEventListener('message', frameMessageHandler);
+
+  // Initial broadcast in case children loaded before this script
+  notifyChildren();
 
   // Store references to event listeners so we can remove them on re-injection
   let stepRecordedHandler = null;

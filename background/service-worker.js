@@ -833,7 +833,7 @@ chrome.webNavigation.onCompleted.addListener((details) => {
     if (details.frameId === 0) {
       clearInjectionWatch(details.tabId);
     }
-    ensureContentScript(details.tabId)
+    ensureContentScript(details.tabId, details.frameId)
       .then(() => chrome.tabs.sendMessage(details.tabId, { type: 'START_RECORDING' }, { frameId: details.frameId }))
       .catch(() => {});
   }
