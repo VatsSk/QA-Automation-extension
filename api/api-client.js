@@ -74,6 +74,8 @@ const ApiClient = {
   // ── Flow API ────────────────────────────────────────────────────────────────
 
   async saveFlowDraft({ authToken, payload }) {
+    console.log('[QA API] saveFlowDraft payload:', JSON.stringify(payload, null, 2));
+
     const res = await fetch(`${API_BASE_URL}/api/flows/draft`, {
       method: 'POST',
       headers: {
@@ -96,6 +98,8 @@ const ApiClient = {
       throw new Error('Cannot update flow: Flow ID is missing.');
     }
 
+    console.log('[QA API] updateFlowDraft payload:', JSON.stringify(payload, null, 2));
+
     const res = await fetch(`${API_BASE_URL}/api/flows/${flowId}`, {
       method: 'PUT',
       headers: {
@@ -103,7 +107,6 @@ const ApiClient = {
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
       },
       body: JSON.stringify(payload)
-
     });
 
     if (!res.ok) {

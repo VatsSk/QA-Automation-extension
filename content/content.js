@@ -16,7 +16,7 @@
   
   if (window !== window.top) {
     // We are in an iframe. Ask parent for our locator.
-    window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR' }, '*');
+    window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR', href: window.location.href }, '*');
   }
 
   const notifyChildren = () => {
@@ -40,6 +40,17 @@
           iframeElement = iframes[i];
           index = i;
           break;
+        }
+      }
+      
+      // Fallback: match by href if contentWindow comparison failed (e.g. cross-origin wrapper issues)
+      if (!iframeElement && event.data.href) {
+        for (let i = 0; i < iframes.length; i++) {
+          if (iframes[i].src && iframes[i].src !== '' && event.data.href.includes(iframes[i].src)) {
+            iframeElement = iframes[i];
+            index = i;
+            break;
+          }
         }
       }
       
@@ -68,7 +79,7 @@
       notifyChildren();
     } else if (event.data && event.data.type === 'QA_EXTENSION_PARENT_READY') {
       if (window !== window.top) {
-        window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR' }, '*');
+        window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR', href: window.location.href }, '*');
       }
     }
   };
