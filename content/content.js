@@ -11,30 +11,28 @@
   }
   window.__qaContentLoaded = true;
 
-  // ── Frame Path Discovery ──────────────────────────────────────────────────
-  let framePath = [];
-  
-  if (window !== window.top) {
-    // We are in an iframe. Ask parent for our locator.
-    window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR', href: window.location.href }, '*');
-  }
+  // ── Frame Path Discovery (Bubble Architecture) ─────────────────────────────
+  // Instead of passing framePaths down and dealing with race conditions, 
+  // we bubble events UP to window.top. Each parent prepends its locator for the child.
 
-  const notifyChildren = () => {
-    const iframes = document.querySelectorAll('iframe, frame');
-    iframes.forEach(iframe => {
-      if (iframe.contentWindow) {
-        iframe.contentWindow.postMessage({ type: 'QA_EXTENSION_PARENT_READY' }, '*');
+  const getAllIframes = (root = document) => {
+    let iframes = Array.from(root.querySelectorAll('iframe, frame'));
+    const allElements = root.querySelectorAll('*');
+    for (const el of allElements) {
+      if (el.shadowRoot) {
+        iframes = iframes.concat(getAllIframes(el.shadowRoot));
       }
-    });
+    }
+    return iframes;
   };
 
-  const frameMessageHandler = (event) => {
-    if (event.data && event.data.type === 'QA_EXTENSION_GET_IFRAME_LOCATOR') {
-      // A child iframe is asking for its locator
+  const bubbleUpMessageHandler = (event) => {
+    if (event.data && event.data.type === 'QA_EXTENSION_BUBBLE_UP') {
       const childWindow = event.source;
-      const iframes = document.querySelectorAll('iframe, frame');
+      const iframes = getAllIframes();
       let iframeElement = null;
       let index = -1;
+      
       for (let i = 0; i < iframes.length; i++) {
         if (iframes[i].contentWindow === childWindow) {
           iframeElement = iframes[i];
@@ -43,7 +41,6 @@
         }
       }
       
-      // Fallback: match by href if contentWindow comparison failed (e.g. cross-origin wrapper issues)
       if (!iframeElement && event.data.href) {
         for (let i = 0; i < iframes.length; i++) {
           if (iframes[i].src && iframes[i].src !== '' && event.data.href.includes(iframes[i].src)) {
@@ -67,26 +64,28 @@
           src: iframeElement.src || null
         };
         
-        const fullPath = [...framePath, frameLocator];
-        childWindow.postMessage({ type: 'QA_EXTENSION_SET_FRAME_PATH', framePath: fullPath }, '*');
-      }
-    } else if (event.data && event.data.type === 'QA_EXTENSION_SET_FRAME_PATH') {
-      framePath = event.data.framePath;
-      if (window.QAOverlay) {
-        window.QAOverlay.framePath = framePath;
-      }
-      // Propagate to any children that might have asked before we got our full path
-      notifyChildren();
-    } else if (event.data && event.data.type === 'QA_EXTENSION_PARENT_READY') {
-      if (window !== window.top) {
-        window.parent.postMessage({ type: 'QA_EXTENSION_GET_IFRAME_LOCATOR', href: window.location.href }, '*');
+        // Prepend this frame's locator to the child's framePath
+        const payload = event.data.payload;
+        payload.framePath = [frameLocator, ...(payload.framePath || [])];
+        
+        if (window !== window.top) {
+          window.parent.postMessage({ type: 'QA_EXTENSION_BUBBLE_UP', payload: payload, originalType: event.data.originalType, href: window.location.href }, '*');
+        } else {
+          // Reached top, send to background
+          chrome.runtime.sendMessage({ type: event.data.originalType, data: payload });
+        }
+      } else if (!iframeElement) {
+        // Failed to find child iframe, but we must keep bubbling to avoid dropping the event
+        console.warn('[QA] Failed to find child iframe during bubble up. Continuing bubble...');
+        if (window !== window.top) {
+          window.parent.postMessage({ type: 'QA_EXTENSION_BUBBLE_UP', payload: event.data.payload, originalType: event.data.originalType, href: window.location.href }, '*');
+        } else {
+          chrome.runtime.sendMessage({ type: event.data.originalType, data: event.data.payload });
+        }
       }
     }
   };
-  window.addEventListener('message', frameMessageHandler);
-
-  // Initial broadcast in case children loaded before this script
-  notifyChildren();
+  window.addEventListener('message', bubbleUpMessageHandler);
 
   // Store references to event listeners so we can remove them on re-injection
   let stepRecordedHandler = null;
@@ -178,13 +177,23 @@
     lastEventTime = now;
     
     console.log('[Content] Forwarding qa-step-recorded:', e.detail.target?.cssSelector);
-    chrome.runtime.sendMessage({ type: 'STEP_RECORDED', data: e.detail });
+    
+    if (window !== window.top) {
+      window.parent.postMessage({ type: 'QA_EXTENSION_BUBBLE_UP', payload: e.detail, originalType: 'STEP_RECORDED', href: window.location.href }, '*');
+    } else {
+      chrome.runtime.sendMessage({ type: 'STEP_RECORDED', data: e.detail });
+    }
   };
   document.addEventListener('qa-step-recorded', stepRecordedHandler);
 
   elementCapturedHandler = (e) => {
     console.log('[Content] Forwarding qa-element-captured:', e.detail.cssSelector);
-    chrome.runtime.sendMessage({ type: 'ELEMENT_CAPTURED', data: e.detail });
+    
+    if (window !== window.top) {
+      window.parent.postMessage({ type: 'QA_EXTENSION_BUBBLE_UP', payload: e.detail, originalType: 'ELEMENT_CAPTURED', href: window.location.href }, '*');
+    } else {
+      chrome.runtime.sendMessage({ type: 'ELEMENT_CAPTURED', data: e.detail });
+    }
   };
   document.addEventListener('qa-element-captured', elementCapturedHandler);
 
@@ -200,7 +209,7 @@
     if (stepRecordedHandler) document.removeEventListener('qa-step-recorded', stepRecordedHandler);
     if (elementCapturedHandler) document.removeEventListener('qa-element-captured', elementCapturedHandler);
     if (shortcutHandler) document.removeEventListener('qa-ext-shortcut', shortcutHandler);
-    window.removeEventListener('message', frameMessageHandler);
+    window.removeEventListener('message', bubbleUpMessageHandler);
   };
 
   document.addEventListener('qa-url-captured', (e) => {
