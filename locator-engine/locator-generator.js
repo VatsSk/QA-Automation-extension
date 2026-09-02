@@ -176,6 +176,7 @@
 
     _generateTestAttributeLocators(el, candidates) {
       const testAttrs = [
+        { name: 'data-role', score: 101 },
         { name: 'data-testid', score: 98 },
         { name: 'data-test', score: 97 },
         { name: 'data-cy', score: 97 },
@@ -455,7 +456,7 @@
       }
 
       // 4. Add stable/semantic attributes
-      const stableAttrNames = ['role', 'name', 'type', 'alt', 'title', 'href', 'for'];
+      const stableAttrNames = ['data-role', 'data-testid', 'data-test', 'data-cy', 'data-qa', 'role', 'name', 'type', 'alt', 'title', 'href', 'for'];
       const stableAttrs = [];
       for (const attr of el.attributes) {
         if (stableAttrNames.includes(attr.name.toLowerCase())) {
@@ -491,8 +492,19 @@
         const parentClasses = getStableClasses(parent);
         
         let parentSel = parentTag;
-        // Prioritize parent's stable ID to guarantee uniqueness
-        if (parent.id && isStableId(parent.id)) {
+        
+        // Find best test attribute on parent
+        let bestTestAttr = null;
+        for (const attr of ['data-role', 'data-testid', 'data-test', 'data-cy', 'data-qa']) {
+          if (parent.hasAttribute(attr)) {
+            bestTestAttr = `[${attr}="${escapeAttr(parent.getAttribute(attr))}"]`;
+            break;
+          }
+        }
+
+        if (bestTestAttr) {
+          parentSel = bestTestAttr; // Highest priority
+        } else if (parent.id && isStableId(parent.id)) {
           parentSel = `#${CSS.escape(parent.id)}`;
         } else if (parentClasses.length > 0) {
           parentSel += `.${CSS.escape(parentClasses[0])}`;
@@ -587,7 +599,7 @@
       }
 
       // Try attribute-based XPath first (stable semantic attributes)
-      const attrs = ['name', 'type', 'role', 'alt', 'title', 'href'];
+      const attrs = ['data-role', 'data-testid', 'data-test', 'name', 'type', 'role', 'alt', 'title', 'href'];
       const stableAttrs = [];
       for (const attr of attrs) {
         const val = el.getAttribute(attr);
@@ -636,8 +648,19 @@
       while (parent && parent !== document.body && depth < maxDepth) {
         let parentXpath = `//${parent.tagName.toLowerCase()}`;
         let isStableParent = false;
+        
+        let bestTestAttr = null;
+        for (const attr of ['data-role', 'data-testid', 'data-test', 'data-cy', 'data-qa']) {
+          if (parent.hasAttribute(attr)) {
+            bestTestAttr = `[@${attr}="${escapeAttr(parent.getAttribute(attr))}"]`;
+            break;
+          }
+        }
 
-        if (parent.id && isStableId(parent.id)) {
+        if (bestTestAttr) {
+          parentXpath += bestTestAttr;
+          isStableParent = true;
+        } else if (parent.id && isStableId(parent.id)) {
           parentXpath += `[@id="${escapeAttr(parent.id)}"]`;
           isStableParent = true;
         } else {
