@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart QA Component Recorder</title>
+  <link rel="stylesheet" href="component.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="component-app">
+    <!-- Header -->
+    <header class="flow-header">
+      <div class="header-main">
+        <div class="flow-title">
+          <span class="label">Component :</span>
+          <input type="text" id="component-name" class="flow-name-input" value="New Component" placeholder="Component Name..." />
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <div class="recording-status recording" id="recording-status">
+            <span class="status-text">Recording</span>
+            <span class="status-dot">●</span>
+          </div>
+          <button class="tool-btn icon-btn text-danger" id="btn-cancel" title="Cancel Recording" style="margin: 0; padding: 4px 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2);">✕</button>
+        </div>
+      </div>
+      <div class="header-sub">
+        <span class="step-count" id="step-count">0 Steps Recorded</span>
+        <span class="autosave-status" id="autosave-status"></span>
+        <div class="default-wait">
+          <span>Default Wait:</span>
+          <input type="number" id="default-wait-input" value="5" min="0" max="60" />
+          <span>sec</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Verification Mode Banner -->
+    <div class="verification-banner hidden" id="verification-banner">
+      <div class="banner-icon">🔍</div>
+      <div class="banner-text">
+        <strong>Verification Mode Active</strong>
+        <span>Click elements to verify. Press <kbd>Alt + Shift + Q</kbd> or <kbd>Esc</kbd> to exit.</span>
+      </div>
+    </div>
+    <!-- Hover Mode Banner -->
+    <div class="hover-banner hidden" id="hover-banner">
+      <div class="banner-icon">🖐</div>
+      <div class="banner-text">
+        <strong>Hover Capture Active</strong>
+        <span>Click an element to record a Hover step. Press <kbd>Esc</kbd> to exit.</span>
+      </div>
+    </div>
+
+    <!-- Timeline container -->
+    <main class="timeline-container" id="timeline-container">
+      <div class="timeline-line"></div>
+      <div class="timeline-steps" id="timeline-steps">
+        <!-- Steps will be injected here via JS -->
+      </div>
+      
+      <!-- Empty State -->
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">✨</div>
+        <h3>Ready to record</h3>
+        <p>Interact with the page. The extension will automatically understand your actions and build the component.</p>
+      </div>
+    </main>
+
+    <!-- Bottom Toolbar -->
+    <footer class="flow-toolbar">
+      <div class="toolbar-group">
+        <button class="tool-btn icon-btn" id="btn-undo" title="Undo" disabled>↩</button>
+        <button class="tool-btn icon-btn" id="btn-redo" title="Redo" disabled>↪</button>
+        <button class="tool-btn icon-btn" id="btn-hover-capture" title="Capture Hover (Click Element)">🖐</button>
+        <button class="tool-btn icon-btn" id="btn-capture-url" title="Capture URL">🌐</button>
+      </div>
+      <div class="toolbar-group main-actions">
+        <button class="tool-btn btn-pause" id="btn-pause">Pause</button>
+        <button class="tool-btn btn-resume hidden" id="btn-resume">Resume</button>
+        <button class="tool-btn btn-finish" id="btn-finish">Finish</button>
+      </div>
+      <div class="toolbar-group" style="visibility: hidden;">
+        <!-- Placeholder to maintain flex center alignment -->
+        <button class="tool-btn icon-btn text-danger">✕</button>
+      </div>
+    </footer>
+    
+    <!-- Custom Modal for confirmations -->
+    <div id="custom-modal" class="custom-modal hidden">
+      <div class="custom-modal-content">
+        <h3 id="custom-modal-title">Confirm</h3>
+        <p id="custom-modal-message">Are you sure?</p>
+        <div class="custom-modal-actions">
+          <button id="custom-modal-cancel" class="tool-btn">Keep Recording</button>
+          <button id="custom-modal-confirm" class="tool-btn text-danger" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3);">Yes, Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Container for alerts -->
+    <div id="toast-container" class="toast-container"></div>
+  </div>
+  <script src="../api/api-client.js"></script>
+  <script src="component.js" type="module"></script>
+</body>
+</html>

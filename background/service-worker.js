@@ -30,19 +30,28 @@ let panelPort = null;            // Persistent port to the side panel
 let activeWindowId = null;       // The ID of the window spawned by the extension
 
 // ── Recording state tracked in the SW so we can auto-reinject after navigation ─
-let recordingState = {
-  isRecording: false,
-  isPaused: false,
-  isVerification: false,
-  isHoverCapture: false,
-  lockedTabId: null,    // When recording, we lock to this specific tab
-  lastUrl: null
-};
+// tabId -> { scenarioId, isRecording, isPaused, tabRef, parentTabId, isVerification, isHoverCapture }
+let recordingState = new Map();
+
+// scenarioId -> ordered array of recorded steps
+let scenarioSteps = new Map();
+
+// scenarioId -> next tabRef counter
+let tabRefCounters = new Map();
+
+const recentClicks = new Map(); // tabId -> { timestamp, locator }
+const injectionWatches = new Map(); // tabId -> timeoutId
 
 // ── Persist / restore state across service-worker restarts ───────────────────
-// MV3 service workers are ephemeral — Chrome can terminate them at any time.
 async function persistWindowState() {
-  await chrome.storage.session.set({ targetTabId, recordingState, pendingMessages, activeWindowId });
+  await chrome.storage.session.set({ 
+    targetTabId, 
+    recordingState: Array.from(recordingState.entries()), 
+    scenarioSteps: Array.from(scenarioSteps.entries()),
+    tabRefCounters: Array.from(tabRefCounters.entries()),
+    pendingMessages, 
+    activeWindowId 
+  });
 }
 
 function updateBadge() {
@@ -55,9 +64,11 @@ function updateBadge() {
 }
 
 async function restoreWindowState() {
-  const s = await chrome.storage.session.get(['targetTabId', 'recordingState', 'pendingMessages', 'activeWindowId']);
+  const s = await chrome.storage.session.get(['targetTabId', 'recordingState', 'scenarioSteps', 'tabRefCounters', 'pendingMessages', 'activeWindowId']);
   if (s.targetTabId) targetTabId = s.targetTabId;
-  if (s.recordingState) recordingState = s.recordingState;
+  if (s.recordingState) recordingState = new Map(s.recordingState);
+  if (s.scenarioSteps) scenarioSteps = new Map(s.scenarioSteps);
+  if (s.tabRefCounters) tabRefCounters = new Map(s.tabRefCounters);
   if (s.pendingMessages && s.pendingMessages.length > 0) pendingMessages = s.pendingMessages;
   if (s.activeWindowId) activeWindowId = s.activeWindowId;
 }
@@ -88,28 +99,47 @@ chrome.windows.onRemoved.addListener((windowId) => {
 
 // Track closed tabs to clear state
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabId === targetTabId) {
-    recordingState = {
-      isRecording: false,
-      isPaused: false,
-      isVerification: false,
-      isHoverCapture: false,
-      lockedTabId: null
-    };
-    targetTabId = null;
-    persistWindowState();
+  if (recordingState.has(tabId)) {
+    recordingState.delete(tabId);
+    clearInjectionWatch(tabId);
   }
+  if (tabId === targetTabId) {
+    targetTabId = null;
+  }
+  persistWindowState();
 });
 
 // ── Track the active tab ─────────────────────────────────────────────────────
 chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
+  console.log(`[multi-tab][${Date.now()}] onActivated: tabId=${tabId}`);
   await restoreWindowState();
 
   // Tab Lock: If recording is active and locked to a specific tab, do NOT switch
   if (recordingState.lockedTabId) return;
 
+  const previousTabId = targetTabId;
   targetTabId = tabId;
   await persistWindowState();
+
+  if (previousTabId && previousTabId !== tabId) {
+    const prevState = recordingState.get(previousTabId);
+    const newState = recordingState.get(tabId);
+    if (prevState && newState && prevState.scenarioId === newState.scenarioId && prevState.isRecording && newState.isRecording) {
+      if (prevState.tabRef && newState.tabRef && prevState.tabRef !== newState.tabRef) {
+        // Skip logging a SWITCH_TAB if the target tab was just created (NEW_TAB_OPENED handles this)
+        const isNewlyCreated = newState.createdAt && (Date.now() - newState.createdAt) < 1500;
+        if (!isNewlyCreated) {
+          appendStep(newState.scenarioId, {
+            action: 'SWITCH_TAB',
+            fromTabRef: prevState.tabRef,
+            toTabRef: newState.tabRef,
+            tabRef: newState.tabRef,
+            timestamp: Date.now()
+          });
+        }
+      }
+    }
+  }
 
   // Notify popup that the tab changed, which will trigger a re-injection if it's recording
   notifyPopup({ type: 'TARGET_TAB_CHANGED', tabId: targetTabId });
@@ -126,7 +156,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     // ── Auto re-inject if recording was active ────────────────────────────
     // Page navigation destroys all injected scripts. We must re-inject them
     // and restore the recording state so the user doesn't notice any interruption.
-    if (recordingState.isRecording) {
+    if (recordingState.get(tabId)?.isRecording) {
       console.log('[SW] Page navigated during recording — re-injecting content scripts...');
       try {
         // Force re-injection by clearing any cached promise for this tab
@@ -197,23 +227,53 @@ chrome.runtime.onMessageExternal.addListener(
 
       case 'START_RECORDING':
         const launchNewSession = () => {
-          chrome.storage.local.set({
+          const launchMode = msg.flag || msg.mode || 'RUN';
+          const sessionData = {
             projectId: msg.projectId,
-            moduleId: msg.moduleId,
             createdBy: msg.createdBy,
             url: msg.url,
-            csvPath: msg.csvPath,
-            runId: msg.runId || null,
-            existingRun: msg.existingRun || null,
-            flowId: msg.flowId || null,
-            existingFlow: msg.existingFlow || null,
-            mode: msg.flag || msg.mode || 'RUN', // flag from web-app, mode as fallback
+            mode: launchMode
+          };
+
+          if (launchMode === 'COMPONENT' || launchMode === 'EDIT_COMPONENT') {
+            console.log("[SW] Launching Component Recorder");
+            console.log("[SW] Captured compModuleId from web:", msg.compModuleId);
+            sessionData.compModuleId = msg.compModuleId;
+            sessionData.compId = msg.compId || null;
+            sessionData.compName = msg.name || null;
+            sessionData.compDesc = msg.description || null;
+            
+            if (launchMode === 'EDIT_COMPONENT') {
+              sessionData.existingComponent = {
+                name: msg.name,
+                defaultWait: 5000,
+                steps: msg.steps || []
+              };
+            }
+          } else if (launchMode === 'FLOW') {
+            sessionData.moduleId = msg.moduleId;
+            sessionData.flowId = msg.flowId || null;
+            sessionData.existingFlow = msg.existingFlow || null;
+            sessionData.csvPath = msg.csvPath || null;
+          } else {
+            // Default (RUN)
+            sessionData.moduleId = msg.moduleId;
+            sessionData.runId = msg.runId || null;
+            sessionData.existingRun = msg.existingRun || null;
+            sessionData.csvPath = msg.csvPath || null;
+          }
+
+          chrome.storage.local.remove(['flow_draft', 'component_draft', 'existingComponent', 'existingFlow', 'existingRun']).then(() => {
+            return chrome.storage.local.set(sessionData);
           }).then(() => {
             const launchMode = msg.flag || msg.mode || 'RUN';
-            const sidePanelPath = launchMode === 'FLOW' ? 'popup/flow.html' : 'popup/popup.html';
+            let sidePanelPath = 'popup/popup.html';
+            if (launchMode === 'FLOW') {
+                sidePanelPath = 'popup/flow.html';
+            } else if (launchMode === 'COMPONENT' || launchMode === 'EDIT_COMPONENT') {
+                sidePanelPath = 'popup/component.html';
+            }
             return chrome.sidePanel.setOptions({ path: sidePanelPath });
-          }).then(() => {
-            return chrome.storage.local.remove(['flow_draft']); // Clear local draft on fresh server launch
           }).then(() => {
             notifyPopup({ type: 'RELOAD_SESSION' });
             
@@ -249,7 +309,7 @@ chrome.runtime.onMessageExternal.addListener(
               });
             }
           });
-        } else if (panelPort !== null || recordingState.isRecording) {
+        } else if (panelPort !== null || recordingState.size > 0) {
           // If we don't have the window ID but we know it's active
           console.warn("[SW] Blocked duplicate launch: extension is already active.");
           sendResponse({ 
@@ -273,22 +333,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
 
     case 'START_RECORDING': {
+      console.log(`[multi-tab][${Date.now()}] START_RECORDING: targetTabId=${targetTabId}, recordingState.has=${recordingState.has(targetTabId)}`);
       if (!targetTabId) {
         sendResponse({ ok: false, error: 'No target tab' });
         break;
       }
 
-      // ── Lock to this tab so switching tabs doesn't break recording ──
-      recordingState.isRecording = true;
-      recordingState.isPaused = false;
-      recordingState.lockedTabId = targetTabId;
-      
-      chrome.tabs.get(targetTabId, (tab) => {
-        if (tab && tab.url) {
-          recordingState.lastUrl = tab.url;
-        }
-        persistWindowState();
-      });
+      const existingState = recordingState.get(targetTabId);
+      const scenarioId = msg.scenarioId || existingState?.scenarioId || 'default';
+
+      if (existingState && existingState.parentTabId !== null) {
+        // This is a child tab already set up by onCreated — just mark it active.
+        // Never re-allocate its tabRef or parentTabId.
+        console.log(`[multi-tab] START_RECORDING for child tab ${targetTabId}, preserving tabRef=${existingState.tabRef}`);
+        existingState.isRecording = true;
+        existingState.isPaused = false;
+        recordingState.set(targetTabId, existingState);
+      } else {
+        const tabRef = existingState ? existingState.tabRef : allocateNextTabRef(scenarioId);
+        const parentTabId = existingState ? existingState.parentTabId : null;
+        recordingState.set(targetTabId, {
+          scenarioId,
+          isRecording: true,
+          isPaused: false,
+          isVerification: false,
+          isHoverCapture: false,
+          tabRef,
+          parentTabId
+        });
+      }
+      persistWindowState();
 
       ensureContentScript(targetTabId)
         .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
@@ -298,16 +372,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     case 'STOP_RECORDING': {
-      // ── Unlock the tab when recording stops ──
-      recordingState.isRecording = false;
-      recordingState.isPaused = false;
-      recordingState.isVerification = false;
-      recordingState.isHoverCapture = false;
-      recordingState.lockedTabId = null;
+      const scenarioId = msg.scenarioId || 'default';
+      const tabsToStop = [];
+      for (const [tId, state] of recordingState.entries()) {
+        if (state.scenarioId === scenarioId) {
+          tabsToStop.push(tId);
+          recordingState.delete(tId);
+        }
+      }
+      tabRefCounters.delete(scenarioId);
       persistWindowState();
 
-      if (targetTabId) {
-        chrome.tabs.sendMessage(targetTabId, { type: msg.type }).catch(() => {});
+      for (const tId of tabsToStop) {
+        chrome.tabs.sendMessage(tId, { type: msg.type }).catch(() => {});
       }
       sendResponse({ ok: true });
       break;
@@ -334,14 +411,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     case 'PAUSE_RECORDING': {
-      recordingState.isPaused = true;
+      const scenarioId = msg.scenarioId || 'default';
+      const tabsToPause = [];
+      for (const [tId, state] of recordingState.entries()) {
+        if (state.scenarioId === scenarioId) {
+          state.isPaused = true;
+          tabsToPause.push(tId);
+        }
+      }
       persistWindowState();
 
-      if (targetTabId) {
-        ensureContentScript(targetTabId)
-          .then(() => chrome.tabs.sendMessage(targetTabId, { type: msg.type }))
+      for (const tId of tabsToPause) {
+        ensureContentScript(tId)
+          .then(() => chrome.tabs.sendMessage(tId, { type: msg.type }))
           .catch(() => {});
       }
+
       sendResponse({ ok: true });
       return true;
     }
@@ -397,6 +482,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Popup asks: who is the current target tab?
     case 'POPUP_INIT': {
       restoreWindowState().then(() => {
+        // Derive a flat recording state summary the popup can consume.
+        // recordingState is a Map(tabId → state) — find the entry for the target tab.
+        const getRecordingStateSummary = (tabId) => {
+          const entry = recordingState.get(tabId);
+          return entry
+            ? { isRecording: entry.isRecording, isPaused: entry.isPaused, isVerification: entry.isVerification, isHoverCapture: entry.isHoverCapture, tabRef: entry.tabRef }
+            : { isRecording: false, isPaused: false, isVerification: false, isHoverCapture: false, tabRef: null };
+        };
+
         // If no target tab, try to find the active tab
         if (!targetTabId) {
           chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
@@ -405,13 +499,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               persistWindowState();
             }
             ensureContentScript(targetTabId)
-              .then(() => sendResponse({ tabId: targetTabId, recordingState }))
-              .catch(() => sendResponse({ tabId: targetTabId, recordingState }));
+              .then(() => sendResponse({ tabId: targetTabId, recordingState: getRecordingStateSummary(targetTabId) }))
+              .catch(() => sendResponse({ tabId: targetTabId, recordingState: getRecordingStateSummary(targetTabId) }));
           });
         } else {
           ensureContentScript(targetTabId)
-            .then(() => sendResponse({ tabId: targetTabId, recordingState }))
-            .catch(() => sendResponse({ tabId: targetTabId, recordingState }));
+            .then(() => sendResponse({ tabId: targetTabId, recordingState: getRecordingStateSummary(targetTabId) }))
+            .catch(() => sendResponse({ tabId: targetTabId, recordingState: getRecordingStateSummary(targetTabId) }));
         }
       });
       return true; // async
@@ -460,10 +554,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // Forward step recordings from content script to popup
     case 'STEP_RECORDED': {
-      console.log('[SW] Forwarding STEP_RECORDED:', msg.data?.target?.cssSelector);
-      notifyPopupAsync({ type: 'STEP_RECORDED', data: msg.data }).then(delivered => {
+      const tabId = sender.tab?.id;
+      const state = recordingState.get(tabId);
+      console.log(`[multi-tab][${Date.now()}] STEP_RECORDED: tabId=${tabId}, resolvedState=`, JSON.stringify(state));
+
+      if (!state) {
+        console.warn('[multi-tab] STEP_RECORDED from untracked tab, discarding', tabId, msg);
+        sendResponse({ ok: false, error: 'untracked tab' });
+        break;
+      }
+
+      const stepData = msg.data;
+      // Merge tabRef from server-side state — content scripts have no knowledge of tabRef
+      const enrichedStep = { ...stepData, tabRef: state.tabRef, parentTabId: state.parentTabId };
+
+      // Buffer click for potential new tab relation
+      if (enrichedStep.action === 'click') {
+        recentClicks.set(tabId, { timestamp: Date.now(), locator: enrichedStep.target });
+      }
+
+      const steps = scenarioSteps.get(state.scenarioId) || [];
+      steps.push(enrichedStep);
+      scenarioSteps.set(state.scenarioId, steps);
+
+      console.log(`[SW] Forwarding STEP_RECORDED to UI for ${state.scenarioId}: tabRef=${enrichedStep.tabRef}`, enrichedStep?.target?.cssSelector);
+      const enrichedMsg = { type: 'STEP_RECORDED', data: enrichedStep, scenarioId: state.scenarioId };
+      notifyPopupAsync(enrichedMsg).then(delivered => {
         if (!delivered) {
-          pendingMessages.push(msg);
+          // Store the ENRICHED message so tabRef survives popup reconnection/drain
+          pendingMessages.push(enrichedMsg);
           persistWindowState();
           updateBadge();
         }
@@ -635,4 +754,127 @@ async function notifyPopupAsync(msg) {
 
 function notifyPopup(msg) {
   notifyPopupAsync(msg).catch(() => {});
+}
+
+// ── Multi-Tab Support (Parent/Child) ──────────────────────────────────────────
+
+function allocateNextTabRef(scenarioId) {
+  const count = tabRefCounters.get(scenarioId) || 0;
+  tabRefCounters.set(scenarioId, count + 1);
+  return `tab_${count}`;
+}
+
+function appendStep(scenarioId, stepData) {
+  const steps = scenarioSteps.get(scenarioId) || [];
+  steps.push(stepData);
+  scenarioSteps.set(scenarioId, steps);
+  // Forward to popup to append to its UI and save to local storage
+  notifyPopupAsync({ type: 'STEP_RECORDED', data: stepData, scenarioId });
+}
+
+chrome.tabs.onCreated.addListener((newTab) => {
+  console.log(`[multi-tab][${Date.now()}] onCreated: tabId=${newTab.id} opener=${newTab.openerTabId}`);
+  let parentTabId = newTab.openerTabId;
+
+  if (!parentTabId) {
+    const scanStart = Date.now();
+    console.log(`[multi-tab][${scanStart}] onCreated scan start`);
+    // Fallback: find the most recent actively-recording tab that had a click
+    // in the last 3000 ms.
+    const candidates = [...recordingState.entries()]
+      .filter(([tabId, state]) => state.isRecording)
+      .map(([tabId]) => tabId);
+
+    for (const tabId of candidates) {
+      const lastClick = recentClicks.get(tabId);
+      if (lastClick && Date.now() - lastClick.timestamp < 3000) {
+        parentTabId = tabId;
+        break;
+      }
+    }
+    console.log(`[multi-tab][${Date.now()}] onCreated scan end, duration=${Date.now() - scanStart}ms, foundParent=${parentTabId}`);
+  }
+
+  if (!parentTabId) {
+    console.warn('[multi-tab] New tab created but no recording parent could be resolved', newTab.id);
+    return;
+  }
+
+  const parentState = recordingState.get(parentTabId);
+  if (!parentState?.isRecording) return;
+
+  const nextRef = allocateNextTabRef(parentState.scenarioId);
+  
+  console.log(`[multi-tab][${Date.now()}] onCreated setting state, pre-existing=${recordingState.has(newTab.id)}, existingVal=`, JSON.stringify(recordingState.get(newTab.id)));
+  recordingState.set(newTab.id, {
+    scenarioId: parentState.scenarioId,
+    isRecording: true,
+    isPaused: parentState.isPaused,
+    isVerification: false,
+    isHoverCapture: false,
+    tabRef: nextRef,
+    parentTabId,
+    createdAt: Date.now(),
+  });
+  persistWindowState();
+
+  let triggeringElement = null;
+  const recentClick = recentClicks.get(parentTabId);
+  if (recentClick && (Date.now() - recentClick.timestamp) < 3000) {
+    triggeringElement = recentClick.locator;
+  }
+
+  appendStep(parentState.scenarioId, {
+    action: 'NEW_TAB_OPENED',
+    fromTabRef: parentState.tabRef,
+    toTabRef: nextRef,
+    triggeringElement,
+    tabRef: parentState.tabRef,
+    timestamp: Date.now()
+  });
+
+  beginInjectionWatch(newTab.id);
+});
+
+chrome.webNavigation.onCompleted.addListener((details) => {
+  if (details.frameId !== 0) return; // main frame only
+  const state = recordingState.get(details.tabId);
+  if (state?.isRecording) {
+    clearInjectionWatch(details.tabId);
+    ensureContentScript(details.tabId)
+      .then(() => chrome.tabs.sendMessage(details.tabId, { type: 'START_RECORDING' }))
+      .catch(() => {});
+  }
+});
+
+const INJECT_TIMEOUT_MS = 10000;
+
+function beginInjectionWatch(tabId) {
+  const timeoutId = setTimeout(() => {
+    const state = recordingState.get(tabId);
+    if (!state) return;
+    
+    appendStep(state.scenarioId, {
+      action: 'TAB_LOAD_TIMEOUT',
+      tabRef: state.tabRef,
+      message: 'New tab did not finish loading within timeout window',
+      timestamp: Date.now()
+    });
+
+    notifyPopupAsync({
+      type: 'TAB_STUCK_LOADING',
+      scenarioId: state.scenarioId,
+      tabRef: state.tabRef,
+      tabId,
+    });
+  }, INJECT_TIMEOUT_MS);
+  injectionWatches.set(tabId, timeoutId);
+}
+
+function clearInjectionWatch(tabId) {
+  const t = injectionWatches.get(tabId);
+  if (t) {
+    clearTimeout(t);
+    injectionWatches.delete(tabId);
+  }
 }

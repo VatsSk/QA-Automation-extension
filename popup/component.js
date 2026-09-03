@@ -2,9 +2,9 @@
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let state = {
-  flowName: 'New Flow',
+  compName: 'New Component',
+  compDesc: '',
   defaultWait: 5,
-  urlChangeWait: 2000,
   steps: [],
   isRecording: false,
   isPaused: false,
@@ -12,8 +12,8 @@ let state = {
   isHoverCaptureMode: false,
   targetTabId: null,
   projectId: null,
-  moduleId: null,
-  flowId: null,
+  compModuleId: null,
+  compId: null,
   createdBy: null,
   loginUrl: null,
   authToken: null
@@ -25,11 +25,10 @@ let _captureInsertIndex = null; // null = append mode, number = insert-at-index 
 
 // ── DOM Elements ──────────────────────────────────────────────────────────────
 const els = {
-  flowName: document.getElementById('flow-name'),
+  compName: document.getElementById('component-name'),
   recordingStatus: document.getElementById('recording-status'),
   stepCount: document.getElementById('step-count'),
   defaultWait: document.getElementById('default-wait-input'),
-  urlChangeWait: document.getElementById('url-change-wait-input'),
   verificationBanner: document.getElementById('verification-banner'),
   timelineSteps: document.getElementById('timeline-steps'),
   emptyState: document.getElementById('empty-state'),
@@ -93,37 +92,40 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadSession() {
-  const data = await chrome.storage.local.get(['projectId', 'moduleId', 'flowId', 'existingFlow', 'createdBy', 'url', 'authToken', 'flow_draft']);
+  const data = await chrome.storage.local.get(['projectId', 'compModuleId', 'compId', 'existingComponent', 'compName', 'compDesc', 'createdBy', 'url', 'authToken', 'component_draft']);
+  console.log("[UI] Loaded session data from storage:", data);
+  console.log("[UI] compModuleId from storage:", data.compModuleId);
   state.projectId = data.projectId;
-  state.moduleId = data.moduleId;
-  state.flowId = data.flowId;
+  state.compModuleId = data.compModuleId;
+  state.compId = data.compId;
   state.createdBy = data.createdBy;
   state.loginUrl = data.url;
   state.authToken = data.authToken;
+  state.compDesc = data.compDesc || '';
+  const initialCompName = data.compName || 'New Component';
 
   // If a local draft exists for this same project/module, restore it
-  const draft = data.flow_draft;
+  const draft = data.component_draft;
   if (
     draft &&
     draft.projectId === data.projectId &&
-    draft.moduleId === data.moduleId
+    draft.compModuleId === data.compModuleId
   ) {
-    state.flowName = draft.flowName || 'New Flow';
+    state.compName = draft.compName || initialCompName;
     state.defaultWait = draft.defaultWait ?? 5;
-    state.urlChangeWait = draft.urlChangeWait ?? 2000;
     state.steps = draft.steps || [];
-    state.flowId = draft.flowId || data.flowId;
-    return; // draft wins — don't overwrite with existingFlow
+    state.compId = draft.compId || data.compId;
+    return; // draft wins — don't overwrite with existingComponent
   }
 
-  if (data.existingFlow) {
-    state.flowName = data.existingFlow.name || 'Edit Flow';
-    state.defaultWait = data.existingFlow.defaultWait ? (data.existingFlow.defaultWait / 1000) : 5;
-    state.urlChangeWait = data.existingFlow.urlChangeWait ?? 2000;
-    state.steps = data.existingFlow.steps ? data.existingFlow.steps.map(mapBackendStepToLocal) : [];
+  if (data.existingComponent) {
+    state.compName = data.existingComponent.name || 'Edit Component';
+    state.defaultWait = data.existingComponent.defaultWait ? (data.existingComponent.defaultWait / 1000) : 5;
+    const backendSteps = data.existingComponent.flowSteps || data.existingComponent.flowStep || data.existingComponent.steps || [];
+    state.steps = backendSteps.map(mapBackendStepToLocal);
   } else {
-    // New flow: add default navigate step
-    state.flowName = 'New Flow';
+    // New component: add default navigate step
+    state.compName = initialCompName;
     state.steps = [];
     if (state.loginUrl) {
       state.steps.push({
@@ -145,62 +147,43 @@ let messageCounter = 0;
 const panelPort = chrome.runtime.connect({ name: 'qa-panel' });
 panelPort.onMessage.addListener(handleIncomingMessage);
 
-// Keep the old onMessage listener as a fallback for non-port messages?
-// NO! We MUST NOT listen to chrome.runtime.onMessage for STEP_RECORDED, because
-// the content script broadcasts it, and the popup will receive the UN-ENRICHED step
-// (without tabRef) at the exact same time the SW receives it. The popup will render
-// the un-enriched step as tab_0, and then deduplicate and DROP the enriched step
-// arriving via the port 1ms later!
-// Only listen for other specific messages if necessary, or just rely entirely on the port.
-chrome.runtime.onMessage.addListener((msg, sender) => {
-  // Ignore raw content script messages that are meant for the SW to enrich
-  if (msg.type === 'STEP_RECORDED' || msg.type === 'ELEMENT_CAPTURED') {
-    if (!msg.scenarioId) return; // If it doesn't have a scenarioId, it came from content script
-  }
-  handleIncomingMessage(msg);
-});
+// Keep the old onMessage listener as a fallback for non-port messages
+chrome.runtime.onMessage.addListener(handleIncomingMessage);
+
 function handleIncomingMessage(msg) {
-  // NOTE: Do NOT filter by _targetTabId here. In multi-tab recording, steps
-  // arrive from child tabs whose targetTabId differs from the current state.targetTabId.
-  // The SW already ensures only the active recording scenario's steps are forwarded.
+  // Filter: only process messages meant for this tab's UI
+  if (msg._targetTabId && msg._targetTabId !== state.targetTabId) return;
 
   if (msg.type === 'STEP_RECORDED') {
     messageCounter++;
-    console.log(`[Flow] Message #${messageCounter} - Received STEP_RECORDED:`, {
+    console.log(`[Component] Message #${messageCounter} - Received STEP_RECORDED:`, {
       selector: msg.data?.target?.cssSelector,
       action: msg.data?.action,
-      tabRef: msg.data?.tabRef,       // ← NEW: log incoming tabRef
       timestamp: Date.now()
     });
   } else {
-    console.log('[Flow] Received message:', msg.type);
+    console.log('[Component] Received message:', msg.type);
   }
   
   if (msg.type === 'STEP_RECORDED') {
-
-
-    // The SW only forwards STEP_RECORDED for actively recording tabs.
-    // Do NOT gate on state.isRecording here — in multi-tab mode the popup's
-    // own state.isRecording may briefly lag behind the SW's ground truth
-    // (e.g. during tab switches), causing child-tab steps to be silently dropped.
-    if (!state.isPaused && !state.isVerificationMode) {
-      console.log('[Flow] Processing STEP_RECORDED, tabRef=', msg.data?.tabRef);
+    if (state.isRecording && !state.isPaused && !state.isVerificationMode) {
+      console.log('[Component] Processing STEP_RECORDED');
       addStepFromCapture(msg.data);
     } else {
-      console.log('[Flow] Ignoring STEP_RECORDED - paused or verification mode');
+      console.log('[Component] Ignoring STEP_RECORDED - not in recording mode');
     }
   } else if (msg.type === 'ELEMENT_CAPTURED') {
     if (state.isVerificationMode) {
       addVerificationStep(msg.data);
     }
   } else if (msg.type === 'TOGGLE_VERIFICATION_MODE') {
-    console.log('[Flow] Shortcut received: TOGGLE_VERIFICATION_MODE');
+    console.log('[Component] Shortcut received: TOGGLE_VERIFICATION_MODE');
     toggleVerificationMode();
   } else if (msg.type === 'TOGGLE_HOVER_MODE') {
-    console.log('[Flow] Shortcut received: TOGGLE_HOVER_MODE');
+    console.log('[Component] Shortcut received: TOGGLE_HOVER_MODE');
     toggleHoverCaptureMode();
   } else if (msg.type === 'TOGGLE_PAUSE_MODE') {
-    console.log('[Flow] Shortcut received: TOGGLE_PAUSE_MODE, state.isRecording:', state.isRecording, 'isPaused:', state.isPaused);
+    console.log('[Component] Shortcut received: TOGGLE_PAUSE_MODE, state.isRecording:', state.isRecording, 'isPaused:', state.isPaused);
     if (state.isRecording) {
       state.isPaused ? resumeRecording() : pauseRecording();
     }
@@ -209,7 +192,7 @@ function handleIncomingMessage(msg) {
     render();
   } else if (msg.type === 'URL_CAPTURED') {
     if (state.isRecording && !state.isPaused) {
-      console.log('[Flow] Shortcut received: URL_CAPTURED', msg.data.url);
+      console.log('[Component] Shortcut received: URL_CAPTURED', msg.data.url);
       pushState();
       const step = {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -242,10 +225,8 @@ function handleIncomingMessage(msg) {
     // Only re-send recording commands if the actual target tab switched.
     // Same-tab navigations (refreshes, SPA routes) are handled by the
     // service worker's auto re-injection — no need to double-send.
-    // IMPORTANT: pass scenarioId so the SW preserves the existing tabRef
-    // for child tabs that were already set up by onCreated.
     if (tabActuallyChanged && state.isRecording && !state.isPaused) {
-      chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId, scenarioId: state.flowId });
+      chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId });
       if (state.isVerificationMode) {
         setTimeout(() => chrome.runtime.sendMessage({ type: 'START_VERIFICATION' }).catch(() => {}), 100);
       }
@@ -258,24 +239,7 @@ function handleIncomingMessage(msg) {
       startRecording();
       render();
     });
-  } else if (msg.type === 'TAB_STUCK_LOADING') {
-    showStuckTabBanner(msg.tabRef, msg.tabId);
   }
-}
-
-function showStuckTabBanner(tabRef, tabId) {
-  let banner = document.getElementById('stuck-tab-banner');
-  if (!banner) {
-    banner = document.createElement('div');
-    banner.id = 'stuck-tab-banner';
-    banner.style.cssText = 'background:var(--danger);color:#fff;padding:8px;font-size:12px;text-align:center;position:relative;margin-bottom:8px;border-radius:4px;';
-    const timeline = document.getElementById('timeline-steps');
-    timeline.parentNode.insertBefore(banner, timeline);
-  }
-  banner.innerHTML = `
-    ${tabRef} hasn't finished loading — recording will continue if you switch back to another tab.
-    <button style="margin-left:8px;background:rgba(0,0,0,0.2);border:none;color:#fff;padding:2px 6px;cursor:pointer;border-radius:3px" onclick="this.parentNode.remove()">Dismiss</button>
-  `;
 }
 
 // Mock keydown for Ctrl+V globally to enter verification mode
@@ -369,7 +333,7 @@ function startRecording() {
   state.isRecording = true;
   state.isPaused = false;
   if (state.targetTabId) {
-    chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId, scenarioId: state.flowId });
+    chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId });
   }
   render();
 }
@@ -377,7 +341,7 @@ function startRecording() {
 function pauseRecording() {
   state.isPaused = true;
   if (state.targetTabId) {
-    chrome.runtime.sendMessage({ type: 'PAUSE_RECORDING', tabId: state.targetTabId, scenarioId: state.flowId });
+    chrome.runtime.sendMessage({ type: 'PAUSE_RECORDING', tabId: state.targetTabId });
   }
   render();
 }
@@ -385,7 +349,7 @@ function pauseRecording() {
 function resumeRecording() {
   state.isPaused = false;
   if (state.targetTabId) {
-    chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId, scenarioId: state.flowId });
+    chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId });
   }
   render();
 }
@@ -446,19 +410,18 @@ function setAutosaveStatus(cls, message) {
 function persistDraft() {
   const draft = {
     projectId: state.projectId,
-    moduleId: state.moduleId,
-    flowId: state.flowId,
-    flowName: state.flowName,
+    compModuleId: state.compModuleId,
+    compId: state.compId,
+    compName: state.compName,
     defaultWait: state.defaultWait,
-    urlChangeWait: state.urlChangeWait,
     steps: state.steps
   };
-  chrome.storage.local.set({ flow_draft: draft });
+  chrome.storage.local.set({ component_draft: draft });
   setAutosaveStatus('saved', '✓ Draft saved');
 }
 
 function clearLocalDraft() {
-  chrome.storage.local.remove('flow_draft');
+  chrome.storage.local.remove('component_draft');
   setAutosaveStatus('', '');
 }
 
@@ -485,33 +448,14 @@ window.addEventListener('beforeunload', () => {
 function mapLocalStepToBackend(step, index) {
   const actionTypeMap = {
     navigate: 'NAVIGATE', click: 'CLICK', type: 'TYPE', select: 'SELECT',
-    checkbox: 'CHECKBOX', upload: 'FILE_UPLOAD', date: 'DATE', hover: 'HOVER', verify: 'VERIFY',
-    URL_CHANGE: 'URL_CHANGE',
-    NEW_TAB_OPENED: 'SWITCH_TO_NEW_TAB', TAB_LOAD_TIMEOUT: 'TAB_LOAD_TIMEOUT', SWITCH_TAB: 'SWITCH_TAB'
+    checkbox: 'CHECKBOX', upload: 'FILE_UPLOAD', date: 'DATE', hover: 'HOVER', verify: 'VERIFY'
   };
   const verTypeMap = {
-    'Visible': 'VISIBLE', 'Not Visible': 'NOT_VISIBLE', 'Exists': 'EXISTS', 'Not Exists': 'NOT_EXISTS', 'Image Source': 'IMAGE', 'Alt Text': 'ATTRIBUTE',
-    'Value': 'VALUE', 'Enabled': 'ENABLED', 'Disabled': 'DISABLED', 'Checked': 'CHECKED', 'Unchecked': 'UNCHECKED', 'Text Equals': 'TEXT',
-    'Contains': 'CONTAINS', 'Text Not Equals': 'NOT_EQUALS', 'Tooltip Text': 'TOOLTIP', 'Selected Value': 'SELECTED_VALUE'
+    'Visible': 'VISIBLE', 'Exists': 'EXISTS', 'Image Source': 'IMAGE', 'Alt Text': 'ATTRIBUTE',
+    'Value': 'VALUE', 'Enabled': 'ENABLED', 'Disabled': 'DISABLED', 'Checked': 'CHECKED', 'Unchecked': 'UNCHECKED', 'Text Equals': 'TEXT'
   };
 
   const isVerify = step.type === 'verify';
-  const isUrlChange = step.type === 'URL_CHANGE';
-  
-  if (isUrlChange) {
-    return {
-      stepOrder: index + 1,
-      name: `Step ${index + 1}`,
-      actionType: 'URL_CHANGE',
-      url: step.url,
-      wait: step.wait != null ? step.wait : (parseInt(state.urlChangeWait, 10) || 2000),
-      overrideWait: step.advanced && step.advanced.overrideWait ? true : false,
-      retryCount: parseInt(step.advanced && step.advanced.retryCount) || 0,
-      continueOnFailure: step.advanced ? step.advanced.continueOnFailure : false,
-      captureScreenshot: step.advanced ? step.advanced.captureScreenshot : false
-    };
-  }
-
   return {
     stepOrder: index + 1,
     name: `Step ${index + 1}`,
@@ -522,74 +466,32 @@ function mapLocalStepToBackend(step, index) {
     expectedValue: isVerify ? step.value : null,
     textSource: step.textSource || null,
     attribute: step.verificationType === 'Alt Text' ? 'alt' : null,
-    overrideWait: !!step.advanced.overrideWait,
-    wait: step.advanced.overrideWait ? (parseInt(step.advanced.overrideWait) * 1000) : null,
-    retryCount: parseInt(step.advanced.retryCount) || 0,
-    continueOnFailure: step.advanced.continueOnFailure,
-    captureScreenshot: step.advanced.captureScreenshot,
-    tabRef: (step.type === 'NEW_TAB_OPENED' || step.type === 'SWITCH_TAB' || step.type === 'TAB_LOAD_TIMEOUT') ? step.tabRef : undefined,
-    fromTabRef: step.fromTabRef || null,
-    toTabRef: step.toTabRef || null,
-    message: step.message || null,
-    triggeringElement: step.triggeringElement || null
+    overrideWait: !!(step.advanced && step.advanced.overrideWait),
+    wait: (step.advanced && step.advanced.overrideWait) ? (parseInt(step.advanced.overrideWait) * 1000) : null,
+    retryCount: (step.advanced && parseInt(step.advanced.retryCount)) || 0,
+    continueOnFailure: !!(step.advanced && step.advanced.continueOnFailure),
+    captureScreenshot: step.advanced ? step.advanced.captureScreenshot : true,
+    isComp: true
   };
 }
 
 function mapBackendStepToLocal(bStep) {
   const localTypeMap = {
     NAVIGATE: 'navigate', CLICK: 'click', TYPE: 'type', SELECT: 'select',
-    CHECKBOX: 'checkbox', FILE_UPLOAD: 'upload', DATE: 'date', HOVER: 'hover', VERIFY: 'verify',
-    URL_CHANGE: 'URL_CHANGE',
-    NEW_TAB_OPENED: 'NEW_TAB_OPENED', SWITCH_TO_NEW_TAB: 'NEW_TAB_OPENED', TAB_LOAD_TIMEOUT: 'TAB_LOAD_TIMEOUT', SWITCH_TAB: 'SWITCH_TAB'
+    CHECKBOX: 'checkbox', FILE_UPLOAD: 'upload', DATE: 'date', HOVER: 'hover', VERIFY: 'verify'
   };
   const localVerMap = {
-    VISIBLE: 'Visible', NOT_VISIBLE: 'Not Visible', EXISTS: 'Exists', NOT_EXISTS: 'Not Exists', IMAGE: 'Image Source', ATTRIBUTE: 'Alt Text',
-    VALUE: 'Value', ENABLED: 'Enabled', DISABLED: 'Disabled', CHECKED: 'Checked', UNCHECKED: 'Unchecked', TEXT: 'Text Equals',
-    CONTAINS: 'Contains', NOT_EQUALS: 'Text Not Equals', TOOLTIP: 'Tooltip Text', SELECTED_VALUE: 'Selected Value'
+    VISIBLE: 'Visible', EXISTS: 'Exists', IMAGE: 'Image Source', ATTRIBUTE: 'Alt Text',
+    VALUE: 'Value', ENABLED: 'Enabled', DISABLED: 'Disabled', CHECKED: 'Checked', UNCHECKED: 'Unchecked', TEXT: 'Text Equals'
   };
-
-  if (bStep.actionType === 'URL_CHANGE') {
-    return {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-      type: 'URL_CHANGE',
-      url: bStep.url || bStep.value,
-      wait: bStep.wait != null ? bStep.wait : (parseInt(state.urlChangeWait, 10) || 2000),
-      advanced: {
-        overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
-        retryCount: bStep.retryCount || 0,
-        continueOnFailure: bStep.continueOnFailure || false,
-        captureScreenshot: bStep.captureScreenshot ?? true
-      }
-    };
-  }
-
-  if (bStep.actionType === 'URL_CHANGE') {
-    return {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-      type: 'URL_CHANGE',
-      url: bStep.url || bStep.value,
-      wait: bStep.wait != null ? bStep.wait : (parseInt(state.urlChangeWait, 10) || 2000),
-      advanced: {
-        overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
-        retryCount: bStep.retryCount || 0,
-        continueOnFailure: bStep.continueOnFailure || false,
-        captureScreenshot: bStep.captureScreenshot ?? true
-      }
-    };
-  }
 
   return {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-    type: localTypeMap[(bStep.actionType || '').toUpperCase()] || 'click',
+    type: localTypeMap[bStep.actionType] || 'click',
     selector: bStep.selector || '',
-    verificationType: (bStep.actionType || '').toUpperCase() === 'VERIFY' ? (localVerMap[(bStep.verificationType || '').toUpperCase()] || localVerMap[bStep.verificationType] || 'Visible') : null,
-    value: (bStep.actionType || '').toUpperCase() === 'VERIFY' ? (bStep.expectedValue || '') : (bStep.value || ''),
+    verificationType: bStep.actionType === 'VERIFY' ? (localVerMap[bStep.verificationType] || 'Visible') : null,
+    value: bStep.actionType === 'VERIFY' ? (bStep.expectedValue || '') : (bStep.value || ''),
     textSource: bStep.textSource || 'text',
-    tabRef: bStep.tabRef || undefined,
-    fromTabRef: bStep.fromTabRef || null,
-    toTabRef: bStep.toTabRef || null,
-    message: bStep.message || null,
-    triggeringElement: bStep.triggeringElement || null,
     advanced: {
       overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
       retryCount: bStep.retryCount || 0,
@@ -601,14 +503,9 @@ function mapBackendStepToLocal(bStep) {
 
 // ── Intelligence ──────────────────────────────────────────────────────────────
 function mapActionToStepType(data) {
-  if (data.action === 'NEW_TAB_OPENED') return 'NEW_TAB_OPENED';
-  if (data.action === 'TAB_LOAD_TIMEOUT') return 'TAB_LOAD_TIMEOUT';
-  if (data.action === 'SWITCH_TAB') return 'SWITCH_TAB';
+  const tag = (data.target.tag || '').toLowerCase();
+  const inputType = (data.target.attributes?.type || '').toLowerCase();
   
-  const tag = (data.target?.tag || '').toLowerCase();
-  const inputType = (data.target?.attributes?.type || '').toLowerCase();
-  
-  if (data.action === 'URL_CHANGE') return 'URL_CHANGE';
   if (data.action === 'navigate') return 'navigate';
   if (data.action === 'hover') return 'hover';
   if (data.action === 'type' || data.action === 'keydown') return 'type';
@@ -630,73 +527,51 @@ function getSuggestedVerification(elData) {
   return 'Text Equals';
 }
 
-// Deduplication: track last recorded step
+  // Deduplication: track last recorded step
 let lastRecordedStep = { selector: '', type: '', value: '', timestamp: 0 };
 
 function addStepFromCapture(data) {
   const type = mapActionToStepType(data);
-  const selector = data.target?.cssSelector || 'System Event';
+  const selector = data.target.cssSelector || 'Unknown Element';
   const value = data.value || '';
-
-  // System-generated synthetic events (e.g. NEW_TAB_OPENED, TAB_LOAD_TIMEOUT) must
-  // never be deduplicated — they fire immediately after a user action by design,
-  // so their Δt is always < 400ms, which would cause the debounce to drop them.
-  const isSystemEvent = type === 'NEW_TAB_OPENED' || type === 'TAB_LOAD_TIMEOUT' || type === 'SWITCH_TAB';
-
-  if (!isSystemEvent) {
-    // Prevent duplicate steps by comparing actual capture time from content script
-    const eventTime = data.timestamp || Date.now();
-    const timeSinceLastStep = eventTime - lastRecordedStep.timestamp;
-
-    // 1. Strict global debounce (ignore ANYTHING within 400ms of last step)
-    // 2. Exact match debounce (ignore exact same action within 1000ms)
-    const isDuplicate =
-      timeSinceLastStep < 400 ||
-      (
-        lastRecordedStep.selector === selector &&
-        lastRecordedStep.type === type &&
-        lastRecordedStep.value === value &&
-        timeSinceLastStep < 1000
-      );
-
-    if (isDuplicate) {
-      console.log('[Flow] Duplicate step ignored:', {
-        type,
-        selector,
-        value,
-        timeSinceLastStep
-      });
-      return;
-    }
-
-    // Update last recorded step (only for real user actions, not synthetic events)
-    lastRecordedStep = { selector, type, value, timestamp: eventTime };
+  
+  // Prevent duplicate steps by comparing actual capture time from content script
+  const eventTime = data.timestamp || Date.now();
+  const timeSinceLastStep = eventTime - lastRecordedStep.timestamp;
+  
+  // 1. Strict global debounce (ignore ANYTHING within 400ms of last step)
+  // 2. Exact match debounce (ignore exact same action within 1000ms)
+  const isDuplicate = 
+    timeSinceLastStep < 400 || 
+    (
+      lastRecordedStep.selector === selector &&
+      lastRecordedStep.type === type &&
+      lastRecordedStep.value === value &&
+      timeSinceLastStep < 1000
+    );
+  
+  if (isDuplicate) {
+    console.log('[Component] Duplicate step ignored:', { 
+      type, 
+      selector, 
+      value,
+      timeSinceLastStep 
+    });
+    return;
   }
-
-  console.log('[Flow] addStepFromCapture → incoming data.tabRef:', data.tabRef, '| type:', type);
-
+  
+  console.log('[Component] Adding step:', { type, selector, value });
+  
+  // Update last recorded step
+  lastRecordedStep = { selector, type, value, timestamp: eventTime };
+  
   const step = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
     type: type,
     selector: selector,
     value: value,
-    fromTabRef: data.fromTabRef,
-    toTabRef: data.toTabRef,
-    message: data.message,
-    triggeringElement: data.triggeringElement,
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
-
-  if (isSystemEvent) {
-    step.tabRef = data.tabRef || 'tab_0';
-  }
-
-  console.log('[Flow] addStepFromCapture → step.tabRef resolved to:', step.tabRef);
-  
-  if (type === 'URL_CHANGE') {
-    step.url = data.url;
-    step.wait = parseInt(state.urlChangeWait, 10) || 2000;
-  }
   
   pushState();
   if (_captureInsertIndex !== null) {
@@ -792,10 +667,9 @@ function scrollToBottom() {
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 function render() {
-  els.flowName.value = state.flowName;
+  els.compName.value = state.compName;
   els.stepCount.textContent = `${state.steps.length} Steps Recorded`;
   els.defaultWait.value = state.defaultWait;
-  els.urlChangeWait.value = state.urlChangeWait;
   
   if (state.steps.length === 0) {
     els.emptyState.classList.remove('hidden');
@@ -873,12 +747,7 @@ function getStepConfig(type) {
     upload:   { icon: '📂', title: 'Upload' },
     date:     { icon: '📅', title: 'Date Picker' },
     verify:   { icon: '🔍', title: 'Verify' },
-    wait:     { icon: '⏳', title: 'Wait' },
-    NEW_TAB_OPENED: { icon: '🗔', title: 'New Tab Opened' },
-    SWITCH_TAB: { icon: '🔄', title: 'Switch Tab' },
-    TAB_LOAD_TIMEOUT: { icon: '⏱️', title: 'Tab Load Timeout' },
-    URL_CHANGE: { icon: '🔗', title: 'URL Changed' }
-
+    wait:     { icon: '⏳', title: 'Wait' }
   };
   return configs[type] || { icon: '⚡', title: 'Action' };
 }
@@ -914,7 +783,7 @@ function captureNextAt(index) {
     state.isRecording = true;
     state.isPaused = false;
     if (state.targetTabId) {
-      chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId, scenarioId: state.flowId });
+      chrome.runtime.sendMessage({ type: 'START_RECORDING', tabId: state.targetTabId });
     }
   }
   // Show the active inserter highlight
@@ -941,9 +810,7 @@ function createStepCard(step, index) {
   card.dataset.type = step.type;
   card.draggable = true;
 
-  console.log(`[Flow] createStepCard #${index}: type=${step.type}, tabRef=${step.tabRef}`);
   const config = getStepConfig(step.type);
-  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   
   card.innerHTML = `
     <div class="step-number">${index + 1}</div>
@@ -952,7 +819,6 @@ function createStepCard(step, index) {
         <div class="step-title-wrap">
           <span class="step-icon">${config.icon}</span>
           <span class="step-title">${config.title}</span>
-          ${step.tabRef ? `<span class="tab-badge" style="background:${step.tabRef === 'tab_1' ? 'red' : '#444'};color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:8px;font-weight:bold;">${esc(step.tabRef)}</span>` : ''}
         </div>
         <div class="step-actions">
           <button class="step-action-btn copy" title="Duplicate">📋</button>
@@ -993,19 +859,10 @@ function createStepCard(step, index) {
   `;
   
   const body = card.querySelector('.step-body');
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   
   if (step.type === 'navigate') {
     body.appendChild(createFieldRow('URL', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
-  } else if (step.type === 'NEW_TAB_OPENED' || step.type === 'SWITCH_TAB') {
-    if (step.fromTabRef) {
-      body.appendChild(createFieldRow('From', `<span class="step-input">${esc(step.fromTabRef)}</span>`));
-    }
-    body.appendChild(createFieldRow('To', `<span class="step-input">${esc(step.toTabRef || step.tabRef)}</span>`));
-  } else if (step.type === 'TAB_LOAD_TIMEOUT') {
-    body.appendChild(createFieldRow('Message', `<span class="step-input" style="color:red">${esc(step.message)}</span>`));
-  } else if (step.type === 'URL_CHANGE') {
-    body.appendChild(createFieldRow('URL', `<input type="text" class="step-input value-update" data-field="url" value="${esc(step.url)}">`));
-    body.appendChild(createFieldRow('Wait (ms)', `<input type="number" class="step-input value-update" data-field="wait" value="${step.wait}">`));
   } else {
     body.appendChild(createFieldRow('Selector', `<input type="text" class="step-input value-update" data-field="selector" value="${esc(step.selector)}">`));
   }
@@ -1022,12 +879,12 @@ function createStepCard(step, index) {
   } else if (step.type === 'verify') {
     body.appendChild(createFieldRow('Type', `
       <select class="step-input value-update" data-field="verificationType">
-        ${['Visible', 'Not Visible', 'Exists', 'Not Exists', 'Image Source', 'Alt Text', 'Value', 'Enabled', 'Disabled', 'Checked', 'Unchecked', 'Selected Value', 'Text Equals', 'Contains', 'Text Not Equals', 'Tooltip Text']
+        ${['Visible', 'Exists', 'Image Source', 'Alt Text', 'Value', 'Enabled', 'Disabled', 'Checked', 'Unchecked', 'Selected Value', 'Text Equals']
           .map(opt => `<option value="${opt}" ${step.verificationType === opt ? 'selected' : ''}>${opt}</option>`).join('')}
       </select>
     `));
     // If text equals or similar, we might need a value field
-    if (['Image Source', 'Alt Text', 'Value', 'Text Equals', 'Selected Value', 'Contains', 'Text Not Equals', 'Tooltip Text'].includes(step.verificationType)) {
+    if (['Image Source', 'Alt Text', 'Value', 'Text Equals', 'Selected Value'].includes(step.verificationType)) {
       body.appendChild(createFieldRow('Expected', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}" placeholder="Expected value...">`));
     }
   } else if (step.type === 'upload') {
@@ -1074,11 +931,7 @@ function bindCardEvents(card, step, index) {
   card.querySelectorAll('.value-update').forEach(input => {
     input.addEventListener('change', (e) => {
       pushState();
-      if (e.target.dataset.field === 'wait') {
-        step[e.target.dataset.field] = parseInt(e.target.value, 10) || 0;
-      } else {
-        step[e.target.dataset.field] = e.target.value;
-      }
+      step[e.target.dataset.field] = e.target.value;
       if (e.target.dataset.field === 'verificationType') {
         render(); // re-render to show/hide Expected value field
       }
@@ -1122,9 +975,8 @@ function bindCardEvents(card, step, index) {
 }
 
 function bindGlobalEvents() {
-  els.flowName.addEventListener('change', (e) => { state.flowName = e.target.value; scheduleAutoSave(); });
+  els.compName.addEventListener('change', (e) => { state.compName = e.target.value; scheduleAutoSave(); });
   els.defaultWait.addEventListener('change', (e) => { state.defaultWait = e.target.value; scheduleAutoSave(); });
-  els.urlChangeWait.addEventListener('change', (e) => { state.urlChangeWait = parseInt(e.target.value, 10) || 2000; scheduleAutoSave(); });
   
   els.btnUndo.addEventListener('click', undo);
   els.btnRedo.addEventListener('click', redo);
@@ -1178,22 +1030,22 @@ function bindGlobalEvents() {
     els.btnFinish.disabled = true;
     els.btnFinish.textContent = 'Saving...';
 
-    const payload = {
-      projectId: state.projectId,
-      moduleId: state.moduleId,
-      name: state.flowName,
-      description: 'Recorded Flow',
-      defaultWait: (parseFloat(state.defaultWait) || 5) * 1000,
-      urlChangeWait: parseInt(state.urlChangeWait, 10) || 2000,
-      status: 'DRAFT',
-      steps: state.steps.map(mapLocalStepToBackend)
-    };
-
     try {
-      if (state.flowId) {
-        await ApiClient.updateFlowDraft({ flowId: state.flowId, authToken: state.authToken, payload });
+      console.log("[UI] Preparing to save payload. state.compModuleId =", state.compModuleId);
+      const payload = {
+        projectId: state.projectId,
+        compModuleId: state.compModuleId,
+        moduleId: state.compModuleId, // Sending both in case the backend DTO expects moduleId
+        createdBy: state.createdBy,
+        name: state.compName,
+        description: state.compDesc || 'Recorded Component',
+        steps: state.steps.map(mapLocalStepToBackend)
+      };
+
+      if (state.compId) {
+        await window.components.updateComponent(state.compId, payload, state.authToken);
       } else {
-        await ApiClient.saveFlowDraft({ authToken: state.authToken, payload });
+        await window.components.createComponent(payload, state.authToken);
       }
       clearLocalDraft();  // wipe local draft after successful API save
       if (window.parent !== window) {
@@ -1202,7 +1054,7 @@ function bindGlobalEvents() {
         window.close();
       }
     } catch (err) {
-      showToast('Failed to save flow: ' + err.message);
+      showToast('Failed to save component: ' + err.message);
       els.btnFinish.disabled = false;
       els.btnFinish.textContent = 'Finish';
     }
