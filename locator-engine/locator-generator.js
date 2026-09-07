@@ -296,7 +296,7 @@
       if (tag === 'input') {
         text = (el.value || '').trim();
       } else {
-        text = (el.textContent || '').trim();
+        text = (el.textContent || '').replace(/[ \t\r\n]+/g, ' ').trim();
       }
       
       if (!text || text.length > 80) return;
@@ -378,7 +378,7 @@
       
       // Class-based selectors
       if (typeof el.className === 'string') {
-        const select2Text = (el.textContent || '').trim();
+        const select2Text = (el.textContent || '').replace(/[ \t\r\n]+/g, ' ').trim();
         
         if (el.className.includes('select2-selection__placeholder') && select2Text) {
            const xpath = `//${tag}[contains(@class,"select2-selection__placeholder") and normalize-space()="${escapeAttr(select2Text)}"]`;
