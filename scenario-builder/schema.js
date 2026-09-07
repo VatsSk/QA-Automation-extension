@@ -182,6 +182,7 @@ const FIELD_META = {
 const ASSERT_TYPES = {
   ASSERT_VISIBLE:        { label: 'Element Visible',       fields: ['locator'],                        required: ['locator'] },
   ASSERT_NOT_VISIBLE:    { label: 'Element Not Visible',   fields: ['locator'],                        required: ['locator'] },
+  ASSERT_NOT_EXISTS:     { label: 'Element Not Exists',    fields: ['locator'],                        required: ['locator'] },
   ASSERT_TEXT_CONTAINS:  { label: 'Text Contains',         fields: ['locator', 'expected'],             required: ['locator', 'expected'] },
   ASSERT_TEXT_EQUALS:    { label: 'Assert Column Value(s)',fields: ['tableId', 'columnName', 'expected'],required: ['tableId', 'columnName', 'expected'] },
   ASSERT_COLUMN_PRESENT: { label: 'Column(s) Present',     fields: ['tableId', 'columnName'],           required: ['tableId', 'columnName'] },
