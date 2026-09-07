@@ -188,8 +188,11 @@
 
   // On full-page load/navigation, detect if URL changed from last known background state
   chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATE' }, (state) => {
-    if (state && state.isRecording && !state.isPaused && state.lastUrl) {
-      if (state.lastUrl !== window.location.href) {
+    if (state && state.isRecording && !state.isPaused) {
+      if (!state.lastUrl) {
+        // Initialize the tracking URL in background
+        chrome.runtime.sendMessage({ type: 'UPDATE_LAST_URL', url: window.location.href });
+      } else if (state.lastUrl !== window.location.href) {
         lastKnownUrl = window.location.href; // update local before dispatching
         const stepData = {
           action: 'URL_CHANGE',

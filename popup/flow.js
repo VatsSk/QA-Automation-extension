@@ -504,11 +504,7 @@ function mapLocalStepToBackend(step, index) {
       name: `Step ${index + 1}`,
       actionType: 'URL_CHANGE',
       url: step.url,
-      wait: step.wait != null ? step.wait : (parseInt(state.urlChangeWait, 10) || 2000),
-      overrideWait: step.advanced && step.advanced.overrideWait ? true : false,
-      retryCount: parseInt(step.advanced && step.advanced.retryCount) || 0,
-      continueOnFailure: step.advanced ? step.advanced.continueOnFailure : false,
-      captureScreenshot: step.advanced ? step.advanced.captureScreenshot : false
+      wait: step.wait != null ? step.wait : (parseInt(state.urlChangeWait, 10) || 2000)
     };
   }
 
@@ -639,9 +635,16 @@ function addStepFromCapture(data) {
   const value = data.value || '';
 
   // System-generated synthetic events (e.g. NEW_TAB_OPENED, TAB_LOAD_TIMEOUT) must
-  // never be deduplicated — they fire immediately after a user action by design,
+  // never be deduplicated strictly by time — they fire immediately after a user action by design,
   // so their Δt is always < 400ms, which would cause the debounce to drop them.
-  const isSystemEvent = type === 'NEW_TAB_OPENED' || type === 'TAB_LOAD_TIMEOUT' || type === 'SWITCH_TAB';
+  const isSystemEvent = type === 'NEW_TAB_OPENED' || type === 'TAB_LOAD_TIMEOUT' || type === 'SWITCH_TAB' || type === 'URL_CHANGE';
+
+  // Prevent identical consecutive URL_CHANGE steps
+  const lastStep = state.steps.length > 0 ? state.steps[state.steps.length - 1] : null;
+  if (type === 'URL_CHANGE' && lastStep && lastStep.type === 'URL_CHANGE' && lastStep.url === value) {
+    console.log('[Flow] Duplicate URL_CHANGE step ignored:', value);
+    return;
+  }
 
   if (!isSystemEvent) {
     // Prevent duplicate steps by comparing actual capture time from content script
@@ -687,7 +690,13 @@ function addStepFromCapture(data) {
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
 
-  if (isSystemEvent) {
+  if (type === 'URL_CHANGE') {
+    step.url = value;
+    step.wait = parseInt(state.urlChangeWait, 10) || 2000;
+    delete step.tabRef;
+  }
+
+  if (isSystemEvent && type !== 'URL_CHANGE') {
     step.tabRef = data.tabRef || 'tab_0';
   }
 

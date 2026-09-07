@@ -448,7 +448,8 @@ window.addEventListener('beforeunload', () => {
 function mapLocalStepToBackend(step, index) {
   const actionTypeMap = {
     navigate: 'NAVIGATE', click: 'CLICK', type: 'TYPE', select: 'SELECT',
-    checkbox: 'CHECKBOX', upload: 'FILE_UPLOAD', date: 'DATE', hover: 'HOVER', verify: 'VERIFY'
+    checkbox: 'CHECKBOX', upload: 'FILE_UPLOAD', date: 'DATE', hover: 'HOVER', verify: 'VERIFY',
+    URL_CHANGE: 'URL_CHANGE'
   };
   const verTypeMap = {
     'Visible': 'VISIBLE', 'Exists': 'EXISTS', 'Image Source': 'IMAGE', 'Alt Text': 'ATTRIBUTE',
@@ -456,6 +457,18 @@ function mapLocalStepToBackend(step, index) {
   };
 
   const isVerify = step.type === 'verify';
+  const isUrlChange = step.type === 'URL_CHANGE';
+
+  if (isUrlChange) {
+    return {
+      stepOrder: index + 1,
+      name: `Step ${index + 1}`,
+      actionType: 'URL_CHANGE',
+      url: step.url,
+      wait: step.wait != null ? step.wait : 2000
+    };
+  }
+
   return {
     stepOrder: index + 1,
     name: `Step ${index + 1}`,
@@ -478,12 +491,28 @@ function mapLocalStepToBackend(step, index) {
 function mapBackendStepToLocal(bStep) {
   const localTypeMap = {
     NAVIGATE: 'navigate', CLICK: 'click', TYPE: 'type', SELECT: 'select',
-    CHECKBOX: 'checkbox', FILE_UPLOAD: 'upload', DATE: 'date', HOVER: 'hover', VERIFY: 'verify'
+    CHECKBOX: 'checkbox', FILE_UPLOAD: 'upload', DATE: 'date', HOVER: 'hover', VERIFY: 'verify',
+    URL_CHANGE: 'URL_CHANGE'
   };
   const localVerMap = {
     VISIBLE: 'Visible', EXISTS: 'Exists', IMAGE: 'Image Source', ATTRIBUTE: 'Alt Text',
     VALUE: 'Value', ENABLED: 'Enabled', DISABLED: 'Disabled', CHECKED: 'Checked', UNCHECKED: 'Unchecked', TEXT: 'Text Equals'
   };
+
+  if (bStep.actionType === 'URL_CHANGE') {
+    return {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      type: 'URL_CHANGE',
+      url: bStep.url || bStep.value,
+      wait: bStep.wait != null ? bStep.wait : 2000,
+      advanced: {
+        overrideWait: bStep.overrideWait ? String((bStep.wait || 0) / 1000) : '',
+        retryCount: bStep.retryCount || 0,
+        continueOnFailure: bStep.continueOnFailure || false,
+        captureScreenshot: bStep.captureScreenshot ?? true
+      }
+    };
+  }
 
   return {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -507,6 +536,7 @@ function mapActionToStepType(data) {
   const inputType = (data.target.attributes?.type || '').toLowerCase();
   
   if (data.action === 'navigate') return 'navigate';
+  if (data.action === 'URL_CHANGE') return 'URL_CHANGE';
   if (data.action === 'hover') return 'hover';
   if (data.action === 'type' || data.action === 'keydown') return 'type';
   if (tag === 'select' || data.action === 'select') return 'select';
@@ -539,16 +569,24 @@ function addStepFromCapture(data) {
   const eventTime = data.timestamp || Date.now();
   const timeSinceLastStep = eventTime - lastRecordedStep.timestamp;
   
-  // 1. Strict global debounce (ignore ANYTHING within 400ms of last step)
-  // 2. Exact match debounce (ignore exact same action within 1000ms)
+  const isSystemEvent = type === 'URL_CHANGE';
+
+  // Prevent identical consecutive URL_CHANGE steps
+  const lastStep = state.steps.length > 0 ? state.steps[state.steps.length - 1] : null;
+  if (type === 'URL_CHANGE' && lastStep && lastStep.type === 'URL_CHANGE' && lastStep.url === value) {
+    console.log('[Component] Duplicate URL_CHANGE step ignored:', value);
+    return;
+  }
+  
   const isDuplicate = 
-    timeSinceLastStep < 400 || 
+    !isSystemEvent &&
+    (timeSinceLastStep < 400 || 
     (
       lastRecordedStep.selector === selector &&
       lastRecordedStep.type === type &&
       lastRecordedStep.value === value &&
       timeSinceLastStep < 1000
-    );
+    ));
   
   if (isDuplicate) {
     console.log('[Component] Duplicate step ignored:', { 
@@ -562,8 +600,10 @@ function addStepFromCapture(data) {
   
   console.log('[Component] Adding step:', { type, selector, value });
   
-  // Update last recorded step
-  lastRecordedStep = { selector, type, value, timestamp: eventTime };
+  // Update last recorded step (only for real user actions, not synthetic events)
+  if (!isSystemEvent) {
+    lastRecordedStep = { selector, type, value, timestamp: eventTime };
+  }
   
   const step = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -572,6 +612,12 @@ function addStepFromCapture(data) {
     value: value,
     advanced: { overrideWait: '', retryCount: 0, continueOnFailure: false, captureScreenshot: true }
   };
+
+  if (type === 'URL_CHANGE') {
+    step.url = value;
+    step.wait = parseInt(state.urlChangeWait, 10) || 2000;
+    delete step.tabRef;
+  }
   
   pushState();
   if (_captureInsertIndex !== null) {
@@ -747,7 +793,8 @@ function getStepConfig(type) {
     upload:   { icon: '📂', title: 'Upload' },
     date:     { icon: '📅', title: 'Date Picker' },
     verify:   { icon: '🔍', title: 'Verify' },
-    wait:     { icon: '⏳', title: 'Wait' }
+    wait:     { icon: '⏳', title: 'Wait' },
+    URL_CHANGE: { icon: '🔗', title: 'URL Changed' }
   };
   return configs[type] || { icon: '⚡', title: 'Action' };
 }
@@ -861,7 +908,10 @@ function createStepCard(step, index) {
   const body = card.querySelector('.step-body');
   const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   
-  if (step.type === 'navigate') {
+  if (step.type === 'URL_CHANGE') {
+    body.appendChild(createFieldRow('URL', `<input type="text" class="step-input value-update" data-field="url" value="${esc(step.url)}">`));
+    body.appendChild(createFieldRow('Wait (ms)', `<input type="number" class="step-input value-update" data-field="wait" value="${step.wait}">`));
+  } else if (step.type === 'navigate') {
     body.appendChild(createFieldRow('URL', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
   } else {
     body.appendChild(createFieldRow('Selector', `<input type="text" class="step-input value-update" data-field="selector" value="${esc(step.selector)}">`));

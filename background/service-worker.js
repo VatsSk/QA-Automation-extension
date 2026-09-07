@@ -362,6 +362,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           parentTabId
         });
       }
+
+      // Initialize lastUrl to the current tab's URL to prevent missing the first navigation
+      chrome.tabs.get(targetTabId, (tab) => {
+        if (tab && tab.url) {
+          const state = recordingState.get(targetTabId);
+          if (state) {
+            state.lastUrl = tab.url;
+            persistWindowState();
+          }
+        }
+      });
+
       persistWindowState();
 
       ensureContentScript(targetTabId)
@@ -391,13 +403,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     case 'GET_RECORDING_STATE': {
-      sendResponse(recordingState);
+      const tabId = sender.tab ? sender.tab.id : targetTabId;
+      const state = recordingState.get(tabId) || {};
+      sendResponse(state);
       break;
     }
 
     case 'UPDATE_LAST_URL': {
-      recordingState.lastUrl = msg.url;
-      persistWindowState();
+      const tabId = sender.tab ? sender.tab.id : targetTabId;
+      const state = recordingState.get(tabId);
+      if (state) {
+        state.lastUrl = msg.url;
+        persistWindowState();
+      }
       sendResponse({ ok: true });
       break;
     }
