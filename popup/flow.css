@@ -204,21 +204,27 @@ kbd {
 }
 
 .timeline-line {
-  position: absolute;
-  top: 24px;
-  bottom: 24px;
-  left: 40px;
-  width: 2px;
-  background-color: var(--border-color);
-  z-index: 1;
+  display: none !important;
 }
 
 .timeline-steps {
+
   position: relative;
   z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.timeline-steps::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 16px;
+  width: 2px;
+  background-color: var(--border-color);
+  z-index: -1;
 }
 
 .empty-state {
