@@ -456,6 +456,17 @@ function mapLocalStepToBackend(step, index) {
     'Value': 'VALUE', 'Enabled': 'ENABLED', 'Disabled': 'DISABLED', 'Checked': 'CHECKED', 'Unchecked': 'UNCHECKED', 'Text Equals': 'TEXT'
   };
 
+  // ── INFO step — documentation only, not executable ────────────────────────
+  if (step.type === 'INFO') {
+    return {
+      stepOrder: index + 1,
+      name: `Step ${index + 1}`,
+      actionType: 'INFO',
+      description: step.description || '',
+      isComp: true
+    };
+  }
+
   const isVerify = step.type === 'verify';
   const isUrlChange = step.type === 'URL_CHANGE';
 
@@ -498,6 +509,15 @@ function mapBackendStepToLocal(bStep) {
     VISIBLE: 'Visible', EXISTS: 'Exists', IMAGE: 'Image Source', ATTRIBUTE: 'Alt Text',
     VALUE: 'Value', ENABLED: 'Enabled', DISABLED: 'Disabled', CHECKED: 'Checked', UNCHECKED: 'Unchecked', TEXT: 'Text Equals'
   };
+
+  // ── INFO step — restore documentation step from backend ───────────────────
+  if ((bStep.actionType || '').toUpperCase() === 'INFO') {
+    return {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      type: 'INFO',
+      description: bStep.description || ''
+    };
+  }
 
   if (bStep.actionType === 'URL_CHANGE') {
     return {
@@ -795,6 +815,7 @@ function getStepConfig(type) {
     verify:   { icon: '🔍', title: 'Verify' },
     wait:     { icon: '⏳', title: 'Wait' },
     URL_CHANGE: { icon: '🔗', title: 'URL Changed' }
+    // NOTE: INFO is NOT in this map — it has its own dedicated renderer (createInfoStepCard)
   };
   return configs[type] || { icon: '⚡', title: 'Action' };
 }
@@ -817,6 +838,38 @@ function createInserterRow(atIndex) {
     e.stopPropagation();
     captureNextAt(atIndex);
   });
+
+  // ⓘ Information button — inserts an INFO step without touching recording state
+  const infoBtn = document.createElement('button');
+  infoBtn.className = 'inserter-info-btn';
+  infoBtn.title = 'Add a documentation/context step (not executed)';
+  infoBtn.innerHTML = 'ⓘ&nbsp;Info';
+  infoBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showInfoDialog({
+      title: 'Add Test Information',
+      confirmLabel: 'Add Information',
+      initialValue: '',
+      atIndex: atIndex
+    }, (text) => {
+      pushState();
+      const step = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+        type: 'INFO',
+        description: text
+      };
+      state.steps.splice(atIndex, 0, step);
+      scheduleAutoSave();
+      render();
+      // Scroll to the new INFO card
+      setTimeout(() => {
+        const newCard = els.timelineSteps.querySelector(`[data-id="${step.id}"]`);
+        if (newCard) newCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 60);
+    });
+  });
+  row.appendChild(infoBtn);
+
   return row;
 }
 
@@ -851,6 +904,11 @@ function createFieldRow(label, inputHtml) {
 }
 
 function createStepCard(step, index) {
+  // ── INFO steps get their own dedicated card — not the executable step UI ──
+  if (step.type === 'INFO') {
+    return createInfoStepCard(step, index);
+  }
+
   const card = document.createElement('div');
   card.className = 'step-card';
   card.dataset.id = step.id;
@@ -1022,6 +1080,222 @@ function bindCardEvents(card, step, index) {
     state.steps.splice(toIdx, 0, moved);
     render();
   });
+}
+
+// ── INFO Step — dedicated card renderer ───────────────────────────────────────
+// INFO steps are purely documentary. They:
+//   • Do NOT show a step-number circle (they are section separators)
+//   • Do NOT show locator/selector/wait/advanced controls
+//   • Do NOT use execution status indicators
+//   • Are still draggable and fully participate in the steps array
+//   • Safely render text via textContent (no XSS risk)
+function createInfoStepCard(step, index) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'info-step-wrapper';
+  wrapper.dataset.id = step.id;
+  wrapper.dataset.type = 'INFO';
+  wrapper.draggable = true;
+
+  const card = document.createElement('div');
+  card.className = 'info-step-card';
+
+  // Header — icon + label + action buttons
+  const header = document.createElement('div');
+  header.className = 'info-step-header';
+
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'info-step-title-wrap';
+
+  const icon = document.createElement('span');
+  icon.className = 'info-step-icon';
+  icon.textContent = 'ⓘ';
+
+  const label = document.createElement('span');
+  label.className = 'info-step-label';
+  label.textContent = 'Test Information';
+
+  titleWrap.appendChild(icon);
+  titleWrap.appendChild(label);
+
+  // Action buttons — only edit, duplicate, delete (no locator/debug/run actions)
+  const actions = document.createElement('div');
+  actions.className = 'info-step-actions';
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'step-action-btn';
+  editBtn.title = 'Edit Information';
+  editBtn.textContent = '✏️';
+  editBtn.addEventListener('click', () => {
+    showInfoDialog({
+      title: 'Edit Information',
+      confirmLabel: 'Save Changes',
+      initialValue: step.description || '',
+      atIndex: null // editing in-place
+    }, (newText) => {
+      pushState();
+      step.description = newText;
+      render();
+    });
+  });
+
+  const dupBtn = document.createElement('button');
+  dupBtn.className = 'step-action-btn';
+  dupBtn.title = 'Duplicate';
+  dupBtn.textContent = '📋';
+  dupBtn.addEventListener('click', () => {
+    pushState();
+    const copy = { id: Date.now().toString() + Math.random().toString(36).substr(2, 5), type: 'INFO', description: step.description };
+    state.steps.splice(index + 1, 0, copy);
+    render();
+  });
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'step-action-btn delete';
+  delBtn.title = 'Delete';
+  delBtn.textContent = '🗑';
+  delBtn.addEventListener('click', () => {
+    pushState();
+    state.steps.splice(index, 1);
+    render();
+  });
+
+  actions.appendChild(editBtn);
+  actions.appendChild(dupBtn);
+  actions.appendChild(delBtn);
+
+  header.appendChild(titleWrap);
+  header.appendChild(actions);
+
+  // Description — rendered safely via textContent (no innerHTML with user text)
+  const desc = document.createElement('div');
+  desc.className = 'info-step-description';
+  desc.textContent = step.description || '';
+
+  // Footer badge
+  const footer = document.createElement('div');
+  footer.className = 'info-step-footer';
+  footer.textContent = 'ⓘ Information only · Not executed';
+
+  card.appendChild(header);
+  card.appendChild(desc);
+  card.appendChild(footer);
+  wrapper.appendChild(card);
+
+  // Drag-and-drop — INFO participates in reordering like any other step
+  wrapper.addEventListener('dragstart', (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', index);
+    wrapper.style.opacity = '0.5';
+  });
+  wrapper.addEventListener('dragend', () => { wrapper.style.opacity = ''; });
+  wrapper.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    wrapper.style.borderTop = '2px dashed var(--step-info)';
+  });
+  wrapper.addEventListener('dragleave', () => { wrapper.style.borderTop = ''; });
+  wrapper.addEventListener('drop', (e) => {
+    e.preventDefault();
+    wrapper.style.borderTop = '';
+    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+    const toIdx = index;
+    if (fromIdx === toIdx) return;
+    pushState();
+    const moved = state.steps.splice(fromIdx, 1)[0];
+    state.steps.splice(toIdx, 0, moved);
+    render();
+  });
+
+  return wrapper;
+}
+
+// ── INFO Dialog — add or edit an INFO step ────────────────────────────────────
+// Opens a modal with a multiline textarea. Text is trimmed before saving.
+// Empty submissions are rejected (confirm button is disabled when textarea is empty).
+// User text is NEVER set via innerHTML — only via textContent/value (XSS safe).
+function showInfoDialog({ title, confirmLabel, initialValue, atIndex }, onConfirm) {
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'info-dialog-overlay';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'info-dialog';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+
+  // Header
+  const headerEl = document.createElement('div');
+  headerEl.className = 'info-dialog-header';
+
+  const iconEl = document.createElement('span');
+  iconEl.className = 'info-dialog-icon';
+  iconEl.textContent = 'ⓘ';
+
+  const titleEl = document.createElement('span');
+  titleEl.className = 'info-dialog-title';
+  titleEl.textContent = title;
+
+  headerEl.appendChild(iconEl);
+  headerEl.appendChild(titleEl);
+
+  // Hint
+  const hint = document.createElement('p');
+  hint.className = 'info-dialog-hint';
+  hint.textContent = 'Add context or notes for the following test steps. This will not be executed.';
+
+  // Textarea — user input, safely read back via .value
+  const textarea = document.createElement('textarea');
+  textarea.className = 'info-dialog-textarea';
+  textarea.placeholder = 'Add context for the following test steps…\n\nExample: We are now testing login through the Root Manager account.';
+  textarea.value = initialValue || '';
+  textarea.rows = 6;
+
+  // Footer buttons
+  const footerEl = document.createElement('div');
+  footerEl.className = 'info-dialog-footer';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'info-dialog-cancel';
+  cancelBtn.textContent = 'Cancel';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'info-dialog-confirm';
+  confirmBtn.textContent = confirmLabel || 'Add Information';
+  confirmBtn.disabled = (textarea.value.trim() === '');
+
+  // Enable/disable confirm based on content
+  textarea.addEventListener('input', () => {
+    confirmBtn.disabled = (textarea.value.trim() === '');
+  });
+
+  const close = () => overlay.remove();
+
+  cancelBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  confirmBtn.addEventListener('click', () => {
+    const text = textarea.value.trim();
+    if (!text) return;
+    close();
+    onConfirm(text);
+  });
+
+  // Keyboard: Enter in textarea should not accidentally submit; Escape closes
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+  });
+
+  footerEl.appendChild(cancelBtn);
+  footerEl.appendChild(confirmBtn);
+
+  dialog.appendChild(headerEl);
+  dialog.appendChild(hint);
+  dialog.appendChild(textarea);
+  dialog.appendChild(footerEl);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  // Focus textarea after mount for accessibility
+  requestAnimationFrame(() => textarea.focus());
 }
 
 function bindGlobalEvents() {

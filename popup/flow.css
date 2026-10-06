@@ -22,6 +22,10 @@
   --step-verify: #f97316; /* Orange */
   --step-hover: #ec4899; /* Pink */
   --step-wait: #64748b; /* Gray */
+  /* INFO step — teal/cyan, clearly distinct from all executable step colors */
+  --step-info: #0891b2;
+  --step-info-bg: rgba(8, 145, 178, 0.06);
+  --step-info-border: rgba(8, 145, 178, 0.3);
   
   --radius: 8px;
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -733,4 +737,245 @@ input:checked + .slider:before {
 @keyframes fadeOut {
   from { opacity: 1; transform: translateY(0); }
   to { opacity: 0; transform: translateY(-10px); }
+}
+
+/* ── INFO Step Card ─────────────────────────────────────────────────────────── */
+/*
+ * INFO steps are purely documentary — they should look clearly distinct from
+ * executable steps (click/type/verify etc.) so the user immediately understands
+ * they are reading context/notes, NOT a Selenium/Playwright action.
+ *
+ * Design choices:
+ *   - Teal/cyan left accent border (not success/danger/primary)
+ *   - Subtle background tint
+ *   - No step-number circle shown (replaced by spanning card)
+ *   - No execution indicators (no ●, ✓, ✕)
+ *   - Pre-wrap text so multiline descriptions render correctly
+ *   - Actions (edit/delete/duplicate) appear on hover, same as other cards
+ */
+
+/* The info card sits in the timeline but spans past the step-number column */
+.info-step-wrapper {
+  /* Aligns with .step-card — same gap as timeline-steps */
+  animation: slideIn 0.3s ease-out forwards;
+  /* Offset left to align visually with .step-content (skip step-number) */
+  margin-left: 50px; /* 34px number circle + 16px gap */
+}
+
+.info-step-card {
+  background-color: var(--step-info-bg);
+  border: 1px solid var(--step-info-border);
+  border-left: 4px solid var(--step-info);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  position: relative;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.info-step-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  border-color: rgba(8, 145, 178, 0.5);
+  border-left-color: var(--step-info);
+}
+
+.info-step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.info-step-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.info-step-icon {
+  font-size: 15px;
+  color: var(--step-info);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.info-step-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--step-info);
+}
+
+.info-step-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.info-step-card:hover .info-step-actions {
+  opacity: 1;
+}
+
+.info-step-description {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  /* Preserve newlines / line breaks from user input */
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Limit display height for very long notes — user can scroll */
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.info-step-footer {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Info Dialog Modal ──────────────────────────────────────────────────────── */
+.info-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+  animation: fadeInOverlay 0.15s ease;
+}
+@keyframes fadeInOverlay {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.info-dialog {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  width: 340px;
+  max-width: 95vw;
+  padding: 20px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+  animation: slideUpDialog 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+@keyframes slideUpDialog {
+  from { opacity: 0; transform: translateY(24px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0)  scale(1); }
+}
+
+.info-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.info-dialog-icon {
+  font-size: 20px;
+  color: var(--step-info);
+}
+
+.info-dialog-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.info-dialog-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  line-height: 1.5;
+  padding-left: 30px; /* indent to align under title text */
+}
+
+.info-dialog-textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: var(--font-family);
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.info-dialog-textarea:focus {
+  border-color: var(--step-info);
+}
+.info-dialog-textarea::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.info-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.info-dialog-cancel {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.info-dialog-cancel:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-primary);
+}
+
+.info-dialog-confirm {
+  background: var(--step-info);
+  border: none;
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.info-dialog-confirm:hover {
+  background: #0e7490;
+}
+.info-dialog-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Info inserter button ───────────────────────────────────────────────────── */
+.inserter-info-btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px dashed rgba(8, 145, 178, 0.5);
+  background: transparent;
+  color: rgba(8, 145, 178, 0.7);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+.inserter-info-btn:hover {
+  border-color: var(--step-info);
+  color: var(--step-info);
+  background: rgba(8, 145, 178, 0.08);
 }
