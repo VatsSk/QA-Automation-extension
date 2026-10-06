@@ -756,21 +756,22 @@ input:checked + .slider:before {
 
 /* The info card sits in the timeline but spans past the step-number column */
 .info-step-wrapper {
-  /* Aligns with .step-card — same gap as timeline-steps */
   animation: slideIn 0.3s ease-out forwards;
-  /* Offset left to align visually with .step-content (skip step-number) */
-  margin-left: 50px; /* 34px number circle + 16px gap */
+  margin-left: 0;
+  position: relative;
+  z-index: 10;
+  margin: 16px 0;
 }
 
 .info-step-card {
-  background-color: var(--step-info-bg);
-  border: 1px solid var(--step-info-border);
+  background: var(--bg-dark);
+  border: 1px dashed var(--step-info);
   border-left: 4px solid var(--step-info);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 12px 16px;
   position: relative;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-  transition: box-shadow 0.2s, border-color 0.2s;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  transition: all 0.2s ease;
 }
 .info-step-card:hover {
   box-shadow: 0 4px 12px rgba(0,0,0,0.25);
@@ -799,11 +800,7 @@ input:checked + .slider:before {
 }
 
 .info-step-label {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--step-info);
+  display: none;
 }
 
 .info-step-actions {
@@ -817,23 +814,15 @@ input:checked + .slider:before {
 }
 
 .info-step-description {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  /* Preserve newlines / line breaks from user input */
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--step-info);
   white-space: pre-wrap;
   word-break: break-word;
-  /* Limit display height for very long notes — user can scroll */
-  max-height: 200px;
-  overflow-y: auto;
 }
 
-.info-step-footer {
-  margin-top: 10px;
-  font-size: 11px;
-  color: var(--text-muted);
-  font-style: italic;
-}
+
 
 /* ── Info Dialog Modal ──────────────────────────────────────────────────────── */
 .info-dialog-overlay {

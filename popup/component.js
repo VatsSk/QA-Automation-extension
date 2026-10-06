@@ -209,7 +209,7 @@ function handleIncomingMessage(msg) {
         scheduleAutoSave();
         render();
         setTimeout(() => {
-          const cards = els.timelineSteps.querySelectorAll('.step-card');
+          const cards = els.timelineSteps.children;
           cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }, 60);
       } else {
@@ -648,7 +648,7 @@ function addStepFromCapture(data) {
     render();
     // Scroll the inserted card into view
     setTimeout(() => {
-      const cards = els.timelineSteps.querySelectorAll('.step-card');
+      const cards = els.timelineSteps.children;
       cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }, 60);
   } else {
@@ -713,7 +713,7 @@ function addVerificationStep(elData) {
     scheduleAutoSave();
     render();
     setTimeout(() => {
-      const cards = els.timelineSteps.querySelectorAll('.step-card');
+      const cards = els.timelineSteps.children;
       cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }, 60);
   } else {
@@ -1171,15 +1171,11 @@ function createInfoStepCard(step, index) {
   desc.className = 'info-step-description';
   desc.textContent = step.description || '';
 
-  // Footer badge
-  const footer = document.createElement('div');
-  footer.className = 'info-step-footer';
-  footer.textContent = 'ⓘ Information only · Not executed';
-
+  
   card.appendChild(header);
   card.appendChild(desc);
-  card.appendChild(footer);
   wrapper.appendChild(card);
+
 
   // Drag-and-drop — INFO participates in reordering like any other step
   wrapper.addEventListener('dragstart', (e) => {
@@ -1334,7 +1330,7 @@ function bindGlobalEvents() {
             scheduleAutoSave();
             render();
             setTimeout(() => {
-              const cards = els.timelineSteps.querySelectorAll('.step-card');
+              const cards = els.timelineSteps.children;
               cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }, 60);
           } else {
