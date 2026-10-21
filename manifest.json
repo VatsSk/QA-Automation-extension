@@ -6,7 +6,9 @@
      "externally_connectable": {
         "matches": [
           "http://localhost/*",
-          "http://3.7.136.248/*"
+          "http://3.7.136.248/*",
+          "http://13.127.183.130/*",
+          "https://dh72194711i41.cloudfront.net/*"
         ]
       },
 

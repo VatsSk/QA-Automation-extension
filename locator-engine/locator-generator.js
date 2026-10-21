@@ -746,7 +746,15 @@
         const siblings = Array.from(node.parentElement.children);
         const sameTagSiblings = siblings.filter(s => s.tagName === node.tagName);
         
-        if (sameTagSiblings.length > 1) {
+        if (node.id && isStableId(node.id)) {
+           const siblingsWithSameId = siblings.filter(s => s.id === node.id);
+           if (siblingsWithSameId.length > 1) {
+              const idx = sameTagSiblings.indexOf(node) + 1;
+              selector = `${tag}#${CSS.escape(node.id)}:nth-of-type(${idx})`;
+           } else {
+              selector = `#${CSS.escape(node.id)}`;
+           }
+        } else if (sameTagSiblings.length > 1) {
            let classUnique = false;
            if (stableClasses.length > 0) {
               const testClass = stableClasses[0];
@@ -796,7 +804,15 @@
         const siblings = Array.from(node.parentElement.children);
         const sameTagSiblings = siblings.filter(s => s.tagName === node.tagName);
 
-        if (sameTagSiblings.length > 1) {
+        if (node.id && isStableId(node.id)) {
+           const siblingsWithSameId = siblings.filter(s => s.id === node.id);
+           if (siblingsWithSameId.length > 1) {
+              const idx = sameTagSiblings.indexOf(node) + 1;
+              selector = `${tag}[@id="${escapeAttr(node.id)}"][${idx}]`;
+           } else {
+              selector = `${tag}[@id="${escapeAttr(node.id)}"]`;
+           }
+        } else if (sameTagSiblings.length > 1) {
            let classUnique = false;
            if (stableClasses.length > 0) {
               const testClass = stableClasses[0];
