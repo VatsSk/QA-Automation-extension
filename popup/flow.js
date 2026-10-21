@@ -235,10 +235,6 @@ function handleIncomingMessage(msg) {
         _captureInsertIndex = insertAt + 1;
         scheduleAutoSave();
         render();
-        setTimeout(() => {
-          const cards = els.timelineSteps.children;
-          cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }, 60);
       } else {
         state.steps.push(step);
         scheduleAutoSave();
@@ -747,11 +743,6 @@ function addStepFromCapture(data) {
     _captureInsertIndex = insertAt + 1; // next capture goes right after this one
     scheduleAutoSave();
     render();
-    // Scroll the inserted card into view
-    setTimeout(() => {
-      const cards = els.timelineSteps.children;
-      cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 60);
   } else {
     state.steps.push(step);
     scheduleAutoSave();
@@ -813,10 +804,6 @@ function addVerificationStep(elData) {
     _captureInsertIndex = insertAt + 1;
     scheduleAutoSave();
     render();
-    setTimeout(() => {
-      const cards = els.timelineSteps.children;
-      cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 60);
   } else {
     state.steps.push(step);
     scheduleAutoSave();
@@ -834,6 +821,8 @@ function scrollToBottom() {
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 function render() {
+  const container = document.getElementById('timeline-container');
+  const prevScrollTop = container ? container.scrollTop : 0;
   els.flowName.value = state.flowName;
   els.stepCount.textContent = `${state.steps.length} Steps Recorded`;
   els.defaultWait.value = state.defaultWait;
@@ -902,6 +891,12 @@ function render() {
 
   // Notify parent overlay about mode state for floating indicator
   notifyParentModes();
+  if (container && prevScrollTop > 0) {
+    container.scrollTo({ top: prevScrollTop, behavior: 'instant' });
+    requestAnimationFrame(() => {
+      container.scrollTo({ top: prevScrollTop, behavior: 'instant' });
+    });
+  }
 }
 
 function getStepConfig(type) {
@@ -967,11 +962,6 @@ function createInserterRow(atIndex) {
       state.steps.splice(atIndex, 0, step);
       scheduleAutoSave();
       render();
-      // Scroll to the new INFO card
-      setTimeout(() => {
-        const newCard = els.timelineSteps.querySelector(`[data-id="${step.id}"]`);
-        if (newCard) newCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }, 60);
     });
   });
   row.appendChild(infoBtn);
@@ -983,6 +973,10 @@ function createInserterRow(atIndex) {
 // _captureInsertIndex: null = normal append mode, number = insert-at mode
 
 function captureNextAt(index) {
+  if (_captureInsertIndex === index) {
+    exitInsertMode();
+    return;
+  }
   _captureInsertIndex = index;
   // Ensure recording is running so the page captures the next action
   if (!state.isRecording || state.isPaused) {
@@ -1449,10 +1443,6 @@ function bindGlobalEvents() {
             _captureInsertIndex = insertAt + 1;
             scheduleAutoSave();
             render();
-            setTimeout(() => {
-              const cards = els.timelineSteps.children;
-              cards[insertAt]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }, 60);
           } else {
             state.steps.push(step);
             scheduleAutoSave();
