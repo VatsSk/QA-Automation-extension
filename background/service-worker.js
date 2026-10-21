@@ -152,6 +152,30 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   if (tabId !== targetTabId) return;
 
+  // Handle URL changes immediately via the background script (for both SPAs and full reloads)
+  if (changeInfo.url) {
+    const state = recordingState.get(tabId);
+    if (state && state.isRecording && !state.isPaused) {
+      if (state.lastUrl !== changeInfo.url) {
+        state.lastUrl = changeInfo.url;
+        persistWindowState();
+
+        const stepData = {
+          action: 'URL_CHANGE',
+          url: changeInfo.url,
+          target: { cssSelector: 'URL_CHANGE' },
+          value: changeInfo.url,
+          timestamp: Date.now(),
+          tabRef: state.tabRef,
+          parentTabId: state.parentTabId
+        };
+
+        console.log(`[SW] URL changed to ${changeInfo.url} on tab ${tabId}. Generating URL_CHANGE step.`);
+        appendStep(state.scenarioId, stepData);
+      }
+    }
+  }
+
   if (changeInfo.status === 'complete') {
     // ── Auto re-inject if recording was active ────────────────────────────
     // Page navigation destroys all injected scripts. We must re-inject them
@@ -254,6 +278,11 @@ chrome.runtime.onMessageExternal.addListener(
             sessionData.moduleId = msg.moduleId;
             sessionData.flowId = msg.flowId || null;
             sessionData.existingFlow = msg.existingFlow || null;
+            sessionData.version = msg.version ?? (msg.existingFlow ? msg.existingFlow.version : null) ?? null;
+            sessionData.createdAt = msg.createdAt ?? (msg.existingFlow ? msg.existingFlow.createdAt : null) ?? null;
+            if (!sessionData.createdBy && (msg.existingFlow?.createdBy || msg.createdBy)) {
+              sessionData.createdBy = msg.createdBy || msg.existingFlow.createdBy;
+            }
             sessionData.csvPath = msg.csvPath || null;
           } else {
             // Default (RUN)

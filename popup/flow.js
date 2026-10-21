@@ -14,6 +14,8 @@ let state = {
   projectId: null,
   moduleId: null,
   flowId: null,
+  version: null,
+  createdAt: null,
   createdBy: null,
   loginUrl: null,
   authToken: null
@@ -93,11 +95,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadSession() {
-  const data = await chrome.storage.local.get(['projectId', 'moduleId', 'flowId', 'existingFlow', 'createdBy', 'url', 'authToken', 'flow_draft']);
+  const data = await chrome.storage.local.get(['projectId', 'moduleId', 'flowId', 'version', 'createdAt', 'existingFlow', 'createdBy', 'url', 'authToken', 'flow_draft']);
   state.projectId = data.projectId;
   state.moduleId = data.moduleId;
   state.flowId = data.flowId;
-  state.createdBy = data.createdBy;
+  state.version = data.version ?? (data.existingFlow ? data.existingFlow.version : null) ?? null;
+  state.createdAt = data.createdAt ?? (data.existingFlow ? data.existingFlow.createdAt : null) ?? null;
+  state.createdBy = data.createdBy ?? (data.existingFlow ? data.existingFlow.createdBy : null) ?? null;
   state.loginUrl = data.url;
   state.authToken = data.authToken;
 
@@ -113,6 +117,9 @@ async function loadSession() {
     state.urlChangeWait = draft.urlChangeWait ?? 2000;
     state.steps = draft.steps || [];
     state.flowId = draft.flowId || data.flowId;
+    if (draft.version !== undefined) state.version = draft.version;
+    if (draft.createdAt !== undefined) state.createdAt = draft.createdAt;
+    if (draft.createdBy !== undefined) state.createdBy = draft.createdBy;
     return; // draft wins — don't overwrite with existingFlow
   }
 
@@ -121,6 +128,9 @@ async function loadSession() {
     state.defaultWait = data.existingFlow.defaultWait ? (data.existingFlow.defaultWait / 1000) : 5;
     state.urlChangeWait = data.existingFlow.urlChangeWait ?? 2000;
     state.steps = data.existingFlow.steps ? data.existingFlow.steps.map(mapBackendStepToLocal) : [];
+    if (data.existingFlow.version !== undefined) state.version = data.existingFlow.version;
+    if (data.existingFlow.createdAt !== undefined) state.createdAt = data.existingFlow.createdAt;
+    if (data.existingFlow.createdBy !== undefined) state.createdBy = data.existingFlow.createdBy;
   } else {
     // New flow: add default navigate step
     state.flowName = 'New Flow';
@@ -448,6 +458,9 @@ function persistDraft() {
     projectId: state.projectId,
     moduleId: state.moduleId,
     flowId: state.flowId,
+    version: state.version !== undefined ? state.version : null,
+    createdAt: state.createdAt ?? null,
+    createdBy: state.createdBy ?? null,
     flowName: state.flowName,
     defaultWait: state.defaultWait,
     urlChangeWait: state.urlChangeWait,
@@ -1465,8 +1478,16 @@ function bindGlobalEvents() {
       defaultWait: (parseFloat(state.defaultWait) || 5) * 1000,
       urlChangeWait: parseInt(state.urlChangeWait, 10) || 2000,
       status: 'DRAFT',
-      steps: state.steps.map(mapLocalStepToBackend)
+      steps: state.steps.map(mapLocalStepToBackend),
+      version: state.version !== undefined ? state.version : null
     };
+
+    if (state.createdAt !== undefined && state.createdAt !== null) {
+      payload.createdAt = state.createdAt;
+    }
+    if (state.createdBy !== undefined && state.createdBy !== null) {
+      payload.createdBy = state.createdBy;
+    }
 
     try {
       if (state.flowId) {
