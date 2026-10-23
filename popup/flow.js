@@ -94,11 +94,70 @@ document.addEventListener('DOMContentLoaded', async () => {
   render();
 });
 
+// ── Component & Module Cache ──────────────────────────────────────────────────
+let _cachedModules = null;
+let _cachedComponentsByModule = {};
+
+async function getModules() {
+  if (_cachedModules) return _cachedModules;
+  if (!state.projectId) {
+    const data = await chrome.storage.local.get(['projectId', 'authToken', 'existingFlow']);
+    state.projectId = data.projectId || data.existingFlow?.projectId || null;
+    state.authToken = state.authToken || data.authToken || null;
+  }
+  if (!state.projectId) {
+    console.warn('[Flow] Cannot fetch modules: state.projectId is missing');
+    return [];
+  }
+  try {
+    const modules = await window.components.listModules(state.projectId, state.authToken);
+    _cachedModules = Array.isArray(modules) ? modules : [];
+    return _cachedModules;
+  } catch (err) {
+    console.error('[Flow] Failed to list component modules:', err);
+    return [];
+  }
+}
+
+async function getComponentsForModule(moduleId) {
+  if (!moduleId) return [];
+  if (_cachedComponentsByModule[moduleId]) return _cachedComponentsByModule[moduleId];
+  if (!state.projectId) {
+    const data = await chrome.storage.local.get(['projectId', 'authToken', 'existingFlow']);
+    state.projectId = data.projectId || data.existingFlow?.projectId || null;
+    state.authToken = state.authToken || data.authToken || null;
+  }
+  if (!state.projectId) return [];
+  try {
+    const comps = await window.components.listComponents(state.projectId, moduleId, state.authToken);
+    _cachedComponentsByModule[moduleId] = Array.isArray(comps) ? comps : [];
+    return _cachedComponentsByModule[moduleId];
+  } catch (err) {
+    console.error('[Flow] Failed to list components for module ' + moduleId + ':', err);
+    return [];
+  }
+}
+function mapFlowItemToLocalStep(item, idx) {
+  if (item.type === 'COMPONENT') {
+    return {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5) + idx,
+      type: 'COMPONENT',
+      componentId: item.componentId || item.compId || '',
+      moduleId: item.moduleId || item.compModuleId || '',
+      componentName: item.componentName || item.name || '',
+      moduleName: item.moduleName || '',
+      description: item.description || '',
+      isReadOnly: true // Components inside an existing flow are read-only
+    };
+  } else {
+    return mapBackendStepToLocal(item.step || item);
+  }
+}
 async function loadSession() {
   const data = await chrome.storage.local.get(['projectId', 'moduleId', 'flowId', 'version', 'createdAt', 'existingFlow', 'createdBy', 'url', 'authToken', 'flow_draft']);
-  state.projectId = data.projectId;
-  state.moduleId = data.moduleId;
-  state.flowId = data.flowId;
+  state.projectId = data.projectId || data.existingFlow?.projectId || null;
+  state.moduleId = data.moduleId || data.existingFlow?.moduleId || null;
+  state.flowId = data.flowId || data.existingFlow?.flowId || data.existingFlow?.id || data.existingFlow?._id || null;
   state.version = data.version ?? (data.existingFlow ? data.existingFlow.version : null) ?? null;
   state.createdAt = data.createdAt ?? (data.existingFlow ? data.existingFlow.createdAt : null) ?? null;
   state.createdBy = data.createdBy ?? (data.existingFlow ? data.existingFlow.createdBy : null) ?? null;
@@ -127,10 +186,83 @@ async function loadSession() {
     state.flowName = data.existingFlow.name || 'Edit Flow';
     state.defaultWait = data.existingFlow.defaultWait ? (data.existingFlow.defaultWait / 1000) : 5;
     state.urlChangeWait = data.existingFlow.urlChangeWait ?? 2000;
-    state.steps = data.existingFlow.steps ? data.existingFlow.steps.map(mapBackendStepToLocal) : [];
     if (data.existingFlow.version !== undefined) state.version = data.existingFlow.version;
     if (data.existingFlow.createdAt !== undefined) state.createdAt = data.existingFlow.createdAt;
     if (data.existingFlow.createdBy !== undefined) state.createdBy = data.existingFlow.createdBy;
+
+    let loadedFromBlueprint = false;
+
+    // Strategy 1: Does existingFlow directly provide flowItems?
+    const directItems = data.existingFlow.flowItems || data.existingFlow.data?.flowItems;
+    if (Array.isArray(directItems) && directItems.length > 0) {
+      console.log('[Flow] Loading from direct existingFlow.flowItems:', directItems.length);
+      state.steps = directItems.map((item, idx) => mapFlowItemToLocalStep(item, idx));
+      loadedFromBlueprint = true;
+    }
+
+    // Strategy 2: If we have a flowId, always fetch the flow-info blueprint from API
+    if (!loadedFromBlueprint && state.flowId) {
+      try {
+        console.log('[Flow] Fetching blueprint from /api/components/flow-info/' + state.flowId);
+        const res = await window.components.getFlowInfo(state.flowId, state.authToken);
+        const blueprint = res?.data || res;
+        const blueprintItems = blueprint?.flowItems || blueprint?.flow_items;
+        if (Array.isArray(blueprintItems) && blueprintItems.length > 0) {
+          console.log('[Flow] Successfully fetched blueprint with', blueprintItems.length, 'flowItems');
+          state.steps = blueprintItems.map((item, idx) => mapFlowItemToLocalStep(item, idx));
+          loadedFromBlueprint = true;
+        }
+      } catch (err) {
+        console.warn('[Flow] Could not fetch flow-info blueprint:', err.message);
+      }
+    }
+
+    // Strategy 3: Check if existingFlow.steps contains flattened component steps (isPartComp: true)
+    if (!loadedFromBlueprint && Array.isArray(data.existingFlow.steps)) {
+      const hasPartComp = data.existingFlow.steps.some(s => s.isPartComp || s.isComp);
+      if (hasPartComp) {
+        console.log('[Flow] Reconstructing component steps from flattened steps with isPartComp: true');
+        const reconstructed = [];
+        let activeCompStep = null;
+
+        for (let idx = 0; idx < data.existingFlow.steps.length; idx++) {
+          const bStep = data.existingFlow.steps[idx];
+          if (bStep.isPartComp || bStep.isComp) {
+            const compId = bStep.componentId || bStep.compId || bStep.component_id || '';
+            const compName = bStep.componentName || bStep.compName || '';
+            const modId = bStep.moduleId || bStep.compModuleId || '';
+
+            // If we are already grouping into the same component
+            if (activeCompStep && (activeCompStep.componentId === compId || !compId)) {
+              if (!activeCompStep.componentName && compName) activeCompStep.componentName = compName;
+              if (!activeCompStep.moduleId && modId) activeCompStep.moduleId = modId;
+              continue;
+            }
+
+            // Start a new component step
+            activeCompStep = {
+              id: Date.now().toString() + Math.random().toString(36).substr(2, 5) + idx,
+              type: 'COMPONENT',
+              componentId: compId,
+              componentName: compName,
+              moduleId: modId,
+              isReadOnly: true
+            };
+            reconstructed.push(activeCompStep);
+          } else {
+            activeCompStep = null;
+            reconstructed.push(mapBackendStepToLocal(bStep));
+          }
+        }
+        state.steps = reconstructed;
+        loadedFromBlueprint = true;
+      }
+    }
+
+    // Strategy 4: Regular pure flow without components
+    if (!loadedFromBlueprint) {
+      state.steps = data.existingFlow.steps ? data.existingFlow.steps.map(mapBackendStepToLocal) : [];
+    }
   } else {
     // New flow: add default navigate step
     state.flowName = 'New Flow';
@@ -991,6 +1123,29 @@ function createInserterRow(atIndex) {
   });
   row.appendChild(infoBtn);
 
+  // 🧩 Component button — inserts a reusable COMPONENT step directly into the timeline
+  const compBtn = document.createElement('button');
+  compBtn.className = 'inserter-comp-btn';
+  compBtn.title = 'Add a reusable component step';
+  compBtn.innerHTML = '🧩&nbsp;Component';
+  compBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pushState();
+    const step = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      type: 'COMPONENT',
+      moduleId: '',
+      moduleName: '',
+      componentId: '',
+      componentName: ''
+    };
+    state.steps.splice(atIndex, 0, step);
+    scheduleAutoSave();
+    render();
+    scrollToStep(step.id);
+  });
+  row.appendChild(compBtn);
+
   return row;
 }
 
@@ -1032,6 +1187,11 @@ function createStepCard(step, index) {
   // ── INFO steps get their own dedicated card — not the executable step UI ──
   if (step.type === 'INFO') {
     return createInfoStepCard(step, index);
+  }
+
+  // ── COMPONENT steps get their own dedicated card ──
+  if (step.type === 'COMPONENT') {
+    return createComponentStepCard(step, index);
   }
 
   const card = document.createElement('div');
@@ -1229,6 +1389,356 @@ function bindCardEvents(card, step, index) {
 //   • Do NOT use execution status indicators
 //   • Are still draggable and fully participate in the steps array
 //   • Safely render text via textContent (no XSS risk)
+
+// ── COMPONENT Step — dedicated card renderer ──────────────────────────────────
+function createComponentStepCard(step, index) {
+  const card = document.createElement('div');
+  card.className = 'step-card comp-step-card';
+  card.dataset.id = step.id;
+  card.dataset.type = 'COMPONENT';
+  card.draggable = true;
+
+  // Step Number
+  const numberEl = document.createElement('div');
+  numberEl.className = 'step-number';
+  numberEl.textContent = index + 1;
+
+  // Step Content Container
+  const content = document.createElement('div');
+  content.className = 'step-content';
+
+  // Step Header
+  const header = document.createElement('div');
+  header.className = 'step-header';
+
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'step-title-wrap';
+
+  const icon = document.createElement('span');
+  icon.className = 'step-icon';
+  icon.textContent = '🧩';
+
+  const title = document.createElement('span');
+  title.className = 'step-title';
+  title.textContent = 'Component';
+
+  const badge = document.createElement('span');
+  badge.className = 'comp-name-badge';
+  badge.textContent = step.componentName || '';
+  badge.style.display = step.componentName ? 'inline-block' : 'none';
+
+  titleWrap.appendChild(icon);
+  titleWrap.appendChild(title);
+  titleWrap.appendChild(badge);
+
+  if (step.isReadOnly) {
+    const readOnlyBadge = document.createElement('span');
+    readOnlyBadge.className = 'comp-readonly-badge';
+    readOnlyBadge.textContent = '🔒 Read-only';
+    readOnlyBadge.title = 'This component is part of the flow and not editable';
+    titleWrap.appendChild(readOnlyBadge);
+  }
+
+  // Step Actions (duplicate, delete)
+  const actions = document.createElement('div');
+  actions.className = 'step-actions';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'step-action-btn copy';
+  copyBtn.title = 'Duplicate';
+  copyBtn.textContent = '📋';
+  copyBtn.addEventListener('click', () => {
+    pushState();
+    const copy = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      type: 'COMPONENT',
+      moduleId: step.moduleId || '',
+      moduleName: step.moduleName || '',
+      componentId: step.componentId || '',
+      componentName: step.componentName || '',
+      description: step.description || ''
+    };
+    state.steps.splice(index + 1, 0, copy);
+    scheduleAutoSave();
+    render();
+    scrollToStep(copy.id);
+  });
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'step-action-btn delete';
+  delBtn.title = 'Delete';
+  delBtn.textContent = '🗑';
+  delBtn.addEventListener('click', () => {
+    pushState();
+    state.steps.splice(index, 1);
+    scheduleAutoSave();
+    render();
+  });
+
+  actions.appendChild(copyBtn);
+  actions.appendChild(delBtn);
+
+  header.appendChild(titleWrap);
+  header.appendChild(actions);
+
+  // Step Body
+  const body = document.createElement('div');
+  body.className = 'step-body';
+
+  // Module Row
+  const modRow = document.createElement('div');
+  modRow.className = 'step-field-row';
+  modRow.innerHTML = '<div class="step-field-label">Module</div>';
+
+  const moduleSelect = document.createElement('select');
+  moduleSelect.className = 'step-input comp-module-select';
+  if (step.isReadOnly) {
+    moduleSelect.disabled = true;
+    moduleSelect.title = 'Component module is read-only';
+  }
+  moduleSelect.innerHTML = '<option value="">Select Module...</option>';
+  modRow.appendChild(moduleSelect);
+
+  // Component Row
+  const compRow = document.createElement('div');
+  compRow.className = 'step-field-row';
+  compRow.innerHTML = '<div class="step-field-label">Component</div>';
+
+  const compSelect = document.createElement('select');
+  compSelect.className = 'step-input comp-select';
+  if (step.isReadOnly) {
+    compSelect.disabled = true;
+    compSelect.title = 'Component selection is read-only';
+  } else {
+    compSelect.disabled = !step.moduleId;
+  }
+  compSelect.innerHTML = `<option value="">${step.moduleId ? 'Loading components...' : 'Select a module first...'}</option>`;
+  compRow.appendChild(compSelect);
+
+  // Description row
+  const metaRow = document.createElement('div');
+  metaRow.className = 'comp-details-row';
+  metaRow.style.display = 'none';
+  const metaText = document.createElement('span');
+  metaText.className = 'comp-desc-text';
+  metaRow.appendChild(metaText);
+
+  if (step.description || step.componentName) {
+    metaText.textContent = step.description || step.componentName;
+    metaText.title = step.description || step.componentName;
+    metaRow.style.display = 'flex';
+  }
+
+  body.appendChild(modRow);
+  body.appendChild(compRow);
+  body.appendChild(metaRow);
+
+  content.appendChild(header);
+  content.appendChild(body);
+
+  card.appendChild(numberEl);
+  card.appendChild(content);
+
+  // Asynchronously populate Module dropdown & Component dropdown
+  populateComponentCardDropdowns(step, moduleSelect, compSelect, badge, metaRow, metaText);
+
+  // Drag and Drop
+  card.addEventListener('dragstart', (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', index);
+    card.style.opacity = '0.5';
+  });
+  card.addEventListener('dragend', () => { card.style.opacity = ''; });
+  card.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    card.style.borderTop = '2px dashed #a855f7';
+  });
+  card.addEventListener('dragleave', () => { card.style.borderTop = ''; });
+  card.addEventListener('drop', (e) => {
+    e.preventDefault();
+    card.style.borderTop = '';
+    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+    const toIdx = index;
+    if (fromIdx === toIdx) return;
+    pushState();
+    const moved = state.steps.splice(fromIdx, 1)[0];
+    state.steps.splice(toIdx, 0, moved);
+    scheduleAutoSave();
+    render();
+  });
+
+  return card;
+}
+
+function formatDropdownText(text, maxLen = 46) {
+  if (!text || typeof text !== 'string') return '';
+  if (text.length <= maxLen) return text;
+  return text.substring(0, maxLen - 1) + '…';
+}
+
+async function populateComponentCardDropdowns(step, moduleSelect, compSelect, badge, metaRow, metaText) {
+  const modules = await getModules();
+
+  // Auto-resolve moduleId if componentId is set but moduleId is missing
+  if (step.componentId && !step.moduleId && modules.length > 0) {
+    for (const mod of modules) {
+      const modId = mod.id || mod._id;
+      const comps = await getComponentsForModule(modId);
+      const found = comps.find(c => (c.id || c._id) === step.componentId);
+      if (found) {
+        step.moduleId = modId;
+        step.moduleName = mod.name;
+        step.componentName = found.name;
+        const stepCount = Array.isArray(found.steps) ? found.steps.length : (found.stepCount || 0);
+        step.description = found.description || (stepCount ? `${stepCount} steps` : '');
+        break;
+      }
+    }
+  }
+
+  moduleSelect.innerHTML = '<option value="">Select Module...</option>';
+  if (modules.length === 0) {
+    moduleSelect.innerHTML = '<option value="">No component modules found</option>';
+  }
+  modules.forEach(m => {
+    const modId = m.id || m._id;
+    const opt = document.createElement('option');
+    opt.value = modId;
+    opt.textContent = formatDropdownText(m.name, 46);
+    opt.title = m.name;
+    if (modId === step.moduleId) {
+      opt.selected = true;
+      moduleSelect.title = m.name;
+    }
+    moduleSelect.appendChild(opt);
+  });
+
+  if (step.isReadOnly) {
+    moduleSelect.disabled = true;
+    compSelect.disabled = true;
+  } else if (step.moduleId) {
+    compSelect.disabled = false;
+    compSelect.innerHTML = '<option value="">Loading components...</option>';
+    const comps = await getComponentsForModule(step.moduleId);
+    compSelect.innerHTML = '<option value="">Select Component...</option>';
+    if (comps.length === 0) {
+      compSelect.innerHTML = '<option value="">No components in this module</option>';
+    }
+    comps.forEach(c => {
+      const cId = c.id || c._id;
+      const opt = document.createElement('option');
+      opt.value = cId;
+      const stepCount = Array.isArray(c.steps) ? c.steps.length : (c.stepCount || 0);
+      const countSuffix = stepCount ? ` (${stepCount} steps)` : '';
+      const fullLabel = c.name + countSuffix;
+      const maxNameLen = Math.max(18, 46 - countSuffix.length);
+      const displayName = (c.name.length > maxNameLen)
+        ? (c.name.substring(0, maxNameLen - 1) + '…')
+        : c.name;
+      opt.textContent = displayName + countSuffix;
+      opt.title = fullLabel + (c.description ? ` - ${c.description}` : '');
+      if (cId === step.componentId) {
+        opt.selected = true;
+        compSelect.title = fullLabel;
+        if (!step.componentName) step.componentName = c.name;
+        if (!step.description) step.description = c.description || (stepCount ? `${stepCount} steps` : '');
+      }
+      compSelect.appendChild(opt);
+    });
+
+    if (step.componentName) {
+      badge.textContent = step.componentName;
+      badge.title = step.componentName;
+      badge.style.display = 'inline-block';
+      metaText.textContent = step.description ? `${step.description}` : 'Reusable component';
+      metaText.title = metaText.textContent;
+      metaRow.style.display = 'flex';
+    }
+  } else {
+    compSelect.disabled = true;
+    compSelect.innerHTML = '<option value="">Select a module first...</option>';
+  }
+
+  if (step.isReadOnly) return; // Prevent editing when component is read-only
+
+  moduleSelect.addEventListener('change', async (e) => {
+    const newModId = e.target.value;
+    step.moduleId = newModId;
+    const modObj = modules.find(m => (m.id || m._id) === newModId);
+    step.moduleName = modObj ? modObj.name : '';
+    moduleSelect.title = modObj ? modObj.name : '';
+    step.componentId = '';
+    step.componentName = '';
+    step.description = '';
+    compSelect.title = '';
+    badge.textContent = '';
+    badge.title = '';
+    badge.style.display = 'none';
+    metaRow.style.display = 'none';
+    metaText.title = '';
+    scheduleAutoSave();
+
+    if (!newModId) {
+      compSelect.disabled = true;
+      compSelect.innerHTML = '<option value="">Select a module first...</option>';
+      return;
+    }
+
+    compSelect.disabled = false;
+    compSelect.innerHTML = '<option value="">Loading components...</option>';
+    const comps = await getComponentsForModule(newModId);
+    compSelect.innerHTML = '<option value="">Select Component...</option>';
+    if (comps.length === 0) {
+      compSelect.innerHTML = '<option value="">No components in this module</option>';
+      return;
+    }
+    comps.forEach(c => {
+      const cId = c.id || c._id;
+      const opt = document.createElement('option');
+      opt.value = cId;
+      const stepCount = Array.isArray(c.steps) ? c.steps.length : (c.stepCount || 0);
+      const countSuffix = stepCount ? ` (${stepCount} steps)` : '';
+      const fullLabel = c.name + countSuffix;
+      const maxNameLen = Math.max(18, 46 - countSuffix.length);
+      const displayName = (c.name.length > maxNameLen)
+        ? (c.name.substring(0, maxNameLen - 1) + '…')
+        : c.name;
+      opt.textContent = displayName + countSuffix;
+      opt.title = fullLabel + (c.description ? ` - ${c.description}` : '');
+      compSelect.appendChild(opt);
+    });
+  });
+
+  compSelect.addEventListener('change', (e) => {
+    const newCompId = e.target.value;
+    step.componentId = newCompId;
+    const comps = _cachedComponentsByModule[step.moduleId] || [];
+    const compObj = comps.find(c => (c.id || c._id) === newCompId);
+    if (compObj) {
+      step.componentName = compObj.name;
+      const stepCount = Array.isArray(compObj.steps) ? compObj.steps.length : (compObj.stepCount || 0);
+      step.description = compObj.description || (stepCount ? `${stepCount} steps` : '');
+      const fullLabel = compObj.name + (stepCount ? ` (${stepCount} steps)` : '');
+      compSelect.title = fullLabel;
+      badge.textContent = compObj.name;
+      badge.title = compObj.name;
+      badge.style.display = 'inline-block';
+      metaText.textContent = (compObj.description ? compObj.description + ' · ' : '') + `${stepCount} steps`;
+      metaText.title = metaText.textContent;
+      metaRow.style.display = 'flex';
+    } else {
+      step.componentName = '';
+      step.description = '';
+      compSelect.title = '';
+      badge.textContent = '';
+      badge.title = '';
+      badge.style.display = 'none';
+      metaRow.style.display = 'none';
+      metaText.title = '';
+    }
+    scheduleAutoSave();
+  });
+}
 function createInfoStepCard(step, index) {
   const wrapper = document.createElement('div');
   wrapper.className = 'info-step-wrapper';
@@ -1490,6 +2000,84 @@ function bindGlobalEvents() {
     els.btnFinish.disabled = true;
     els.btnFinish.textContent = 'Saving...';
 
+    const hasComponents = state.steps.some(s => s.type === 'COMPONENT' || !!s.componentId);
+
+    // Validate that all component steps have a component selected
+    if (hasComponents) {
+      for (let i = 0; i < state.steps.length; i++) {
+        const s = state.steps[i];
+        if (s.type === 'COMPONENT') {
+          if (!s.componentId) {
+            showToast(`Please select a component for Step ${i + 1} or remove it.`);
+            els.btnFinish.disabled = false;
+            els.btnFinish.textContent = 'Finish';
+            return;
+          }
+        }
+      }
+
+      // ── Case 2: Composite Flow (contains 1+ components) ──
+      const flowItems = state.steps.map((step, idx) => {
+        const order = idx + 1;
+        if (step.type === 'COMPONENT' || step.componentId) {
+          return {
+            order: order,
+            type: 'COMPONENT',
+            componentId: step.componentId
+          };
+        } else {
+          const backendStep = mapLocalStepToBackend(step, idx);
+          backendStep.isComp = false;
+          return {
+            order: order,
+            type: 'STEP',
+            step: backendStep
+          };
+        }
+      });
+
+      const payload = {
+        id: state.flowId,
+        flowId: state.flowId,
+        projectId: state.projectId,
+        moduleId: state.moduleId,
+        name: state.flowName,
+        description: 'Recorded Flow',
+        containsComp: true,
+        flowItems: flowItems
+      };
+
+      if (state.version !== undefined && state.version !== null) {
+        payload.version = state.version;
+      }
+      if (state.createdAt !== undefined && state.createdAt !== null) {
+        payload.createdAt = state.createdAt;
+      }
+      if (state.createdBy !== undefined && state.createdBy !== null) {
+        payload.createdBy = state.createdBy;
+      }
+
+      try {
+        if (state.flowId) {
+          await window.components.saveFlowInfo(state.flowId, payload, state.authToken);
+        } else {
+          await window.components.createFlowInfo(payload, state.authToken);
+        }
+        clearLocalDraft();
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: 'QA_CLOSE' }, '*');
+        } else {
+          window.close();
+        }
+      } catch (err) {
+        showToast('Failed to save flow: ' + err.message);
+        els.btnFinish.disabled = false;
+        els.btnFinish.textContent = 'Finish';
+      }
+      return;
+    }
+
+    // ── Pure Steps Flow (No components) ──
     const payload = {
       projectId: state.projectId,
       moduleId: state.moduleId,

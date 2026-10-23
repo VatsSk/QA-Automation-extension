@@ -198,6 +198,7 @@ kbd {
 .timeline-container {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px;
   position: relative;
   scroll-behavior: smooth;
@@ -208,12 +209,13 @@ kbd {
 }
 
 .timeline-steps {
-
   position: relative;
   z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .timeline-steps::before {
@@ -258,6 +260,8 @@ kbd {
   gap: 16px;
   align-items: stretch;
   animation: slideIn 0.3s ease-out forwards;
+  min-width: 0;
+  max-width: 100%;
 }
 
 @keyframes slideIn {
@@ -297,6 +301,8 @@ kbd {
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   transition: box-shadow 0.2s;
+  min-width: 0;
+  max-width: 100%;
 }
 .step-card:hover .step-content {
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
@@ -310,11 +316,16 @@ kbd {
   align-items: center;
   background-color: rgba(255,255,255,0.02);
   border-bottom: 1px solid var(--border-color);
+  min-width: 0;
+  gap: 8px;
 }
 .step-title-wrap {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 .step-icon {
   font-size: 14px;
@@ -355,17 +366,22 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .step-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 .step-field-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 .step-field-label {
   font-size: 11px;
@@ -385,6 +401,8 @@ kbd {
   padding: 6px 10px;
   font-size: 13px;
   flex: 1;
+  min-width: 0;
+  max-width: 100%;
   font-family: monospace;
 }
 .step-input:focus {
@@ -398,7 +416,22 @@ select.step-input {
   background-repeat: no-repeat;
   background-position: right 8px top 50%;
   background-size: 10px auto;
-  padding-right: 24px;
+  padding-right: 28px;
+  cursor: pointer;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+select.step-input option {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 12px;
+  padding: 6px 10px;
 }
 
 textarea.step-input {
@@ -973,4 +1006,114 @@ input:checked + .slider:before {
   border-color: var(--step-info);
   color: var(--step-info);
   background: rgba(8, 145, 178, 0.08);
+}
+
+/* ── Component Step & Inserter Styling ───────────────────────────────────── */
+.step-card[data-type="COMPONENT"] .step-header {
+  border-top: 3px solid #a855f7;
+}
+.step-card[data-type="COMPONENT"] .step-title {
+  color: #c084fc;
+}
+.step-card[data-type="COMPONENT"] .step-number {
+  border-color: #a855f7;
+  color: #c084fc;
+  background-color: rgba(168, 85, 247, 0.1);
+}
+.step-card[data-type="COMPONENT"] .step-field-label {
+  width: 74px;
+  min-width: 74px;
+  flex-shrink: 0;
+}
+.comp-module-select,
+.comp-select {
+  font-family: var(--font-family) !important;
+  font-size: 12px !important;
+  color: var(--text-primary);
+  background-color: var(--bg-input);
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  padding-right: 28px !important;
+  box-sizing: border-box;
+}
+.comp-name-badge {
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  color: #d8b4fe;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comp-details-row {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 0 82px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.comp-desc-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.inserter-comp-btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px dashed rgba(168, 85, 247, 0.5);
+  background: transparent;
+  color: rgba(168, 85, 247, 0.85);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+.inserter-comp-btn:hover {
+  border-color: #a855f7;
+  color: #c084fc;
+  background: rgba(168, 85, 247, 0.1);
+}
+.comp-readonly-badge {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.step-card[data-type="COMPONENT"] select:disabled {
+  cursor: not-allowed !important;
+  opacity: 0.75 !important;
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  color: var(--text-secondary) !important;
+  border-color: var(--border-color) !important;
 }

@@ -253,11 +253,15 @@ chrome.runtime.onMessageExternal.addListener(
         const launchNewSession = () => {
           const launchMode = msg.flag || msg.mode || 'RUN';
           const sessionData = {
-            projectId: msg.projectId,
-            createdBy: msg.createdBy,
-            url: msg.url,
+            projectId: msg.projectId || msg.existingFlow?.projectId || null,
+            createdBy: msg.createdBy || msg.existingFlow?.createdBy || null,
+            url: msg.url || msg.existingFlow?.url || null,
             mode: launchMode
           };
+
+          if (msg.authToken || msg.token || msg.existingFlow?.authToken) {
+            sessionData.authToken = msg.authToken || msg.token || msg.existingFlow?.authToken;
+          }
 
           if (launchMode === 'COMPONENT' || launchMode === 'EDIT_COMPONENT') {
             console.log("[SW] Launching Component Recorder");
@@ -275,8 +279,8 @@ chrome.runtime.onMessageExternal.addListener(
               };
             }
           } else if (launchMode === 'FLOW') {
-            sessionData.moduleId = msg.moduleId;
-            sessionData.flowId = msg.flowId || null;
+            sessionData.moduleId = msg.moduleId || msg.existingFlow?.moduleId || null;
+            sessionData.flowId = msg.flowId || msg.existingFlow?.flowId || msg.existingFlow?.id || msg.existingFlow?._id || null;
             sessionData.existingFlow = msg.existingFlow || null;
             sessionData.version = msg.version ?? (msg.existingFlow ? msg.existingFlow.version : null) ?? null;
             sessionData.createdAt = msg.createdAt ?? (msg.existingFlow ? msg.existingFlow.createdAt : null) ?? null;
@@ -292,7 +296,12 @@ chrome.runtime.onMessageExternal.addListener(
             sessionData.csvPath = msg.csvPath || null;
           }
 
-          chrome.storage.local.remove(['flow_draft', 'component_draft', 'existingComponent', 'existingFlow', 'existingRun']).then(() => {
+          chrome.storage.local.get(['authToken']).then((stored) => {
+            if (!sessionData.authToken && stored?.authToken) {
+              sessionData.authToken = stored.authToken;
+            }
+            return chrome.storage.local.remove(['flow_draft', 'component_draft', 'existingComponent', 'existingFlow', 'existingRun']);
+          }).then(() => {
             return chrome.storage.local.set(sessionData);
           }).then(() => {
             const launchMode = msg.flag || msg.mode || 'RUN';

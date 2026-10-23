@@ -1,9 +1,9 @@
 // ─── api-client.js ───────────────────────────────────────────────────────────
 
 // 'http://3.7.136.248:8088'
-// const API_BASE_URL = 'http://localhost:8088';
+ const API_BASE_URL = 'http://localhost:8088';
 //const API_BASE_URL = 'http://3.7.136.248:8088';
-const API_BASE_URL = 'https://dh72194711i41.cloudfront.net';
+//const API_BASE_URL = 'https://dh72194711i41.cloudfront.net';
  // TODO: Make configurable, env var, or detect from context
   
 const ApiClient = {
@@ -138,7 +138,9 @@ const components = {
     createComponent: (data, authToken) => request('POST', `/api/components`, data, authToken),
     updateComponent: (id, data, authToken) => request('PUT', `/api/components/${id}`, data, authToken),
     getFlowInfo: (flowId, authToken) => request('GET', `/api/components/flow-info/${flowId}`, null, authToken),
-    saveFlowInfo: (flowId, data, authToken) => request('PUT', `/api/components/flow-info/${flowId}`, data, authToken)
+    saveFlowInfo: (flowId, data, authToken) => request('PUT', `/api/components/flow-info/${flowId}`, data, authToken),
+    createFlowInfo: (data, authToken) => request('POST', `/api/components/flow-info`, data, authToken)
 };
 
+window.ApiClient = ApiClient;
 window.components = components;
