@@ -235,6 +235,7 @@ function handleIncomingMessage(msg) {
         _captureInsertIndex = insertAt + 1;
         scheduleAutoSave();
         render();
+        scrollToStep(step.id);
       } else {
         state.steps.push(step);
         scheduleAutoSave();
@@ -743,6 +744,7 @@ function addStepFromCapture(data) {
     _captureInsertIndex = insertAt + 1; // next capture goes right after this one
     scheduleAutoSave();
     render();
+    scrollToStep(step.id);
   } else {
     state.steps.push(step);
     scheduleAutoSave();
@@ -804,6 +806,7 @@ function addVerificationStep(elData) {
     _captureInsertIndex = insertAt + 1;
     scheduleAutoSave();
     render();
+    scrollToStep(step.id);
   } else {
     state.steps.push(step);
     scheduleAutoSave();
@@ -815,8 +818,29 @@ function addVerificationStep(elData) {
 function scrollToBottom() {
   setTimeout(() => {
     const container = document.getElementById('timeline-container');
-    container.scrollTop = container.scrollHeight;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, 50);
+}
+
+function scrollToStep(stepId) {
+  if (!stepId) return;
+  setTimeout(() => {
+    const container = document.getElementById('timeline-container');
+    if (!container) return;
+
+    const isLastStep = state.steps.length > 0 && state.steps[state.steps.length - 1].id === stepId;
+    if (isLastStep) {
+      container.scrollTop = container.scrollHeight;
+      return;
+    }
+
+    const card = els.timelineSteps ? els.timelineSteps.querySelector(`[data-id="${stepId}"]`) : null;
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, 60);
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -962,6 +986,7 @@ function createInserterRow(atIndex) {
       state.steps.splice(atIndex, 0, step);
       scheduleAutoSave();
       render();
+      scrollToStep(step.id);
     });
   });
   row.appendChild(infoBtn);
@@ -1141,7 +1166,9 @@ function bindCardEvents(card, step, index) {
     const copy = JSON.parse(JSON.stringify(step));
     copy.id = Date.now().toString() + Math.random().toString(36).substr(2, 5);
     state.steps.splice(index + 1, 0, copy);
+    scheduleAutoSave();
     render();
+    scrollToStep(copy.id);
   });
 
   // Value updates
@@ -1259,7 +1286,9 @@ function createInfoStepCard(step, index) {
     pushState();
     const copy = { id: Date.now().toString() + Math.random().toString(36).substr(2, 5), type: 'INFO', description: step.description };
     state.steps.splice(index + 1, 0, copy);
+    scheduleAutoSave();
     render();
+    scrollToStep(copy.id);
   });
 
   const delBtn = document.createElement('button');
@@ -1443,6 +1472,7 @@ function bindGlobalEvents() {
             _captureInsertIndex = insertAt + 1;
             scheduleAutoSave();
             render();
+            scrollToStep(step.id);
           } else {
             state.steps.push(step);
             scheduleAutoSave();
