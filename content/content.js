@@ -58,6 +58,11 @@
         break;
       }
 
+      case 'SYNC_VARIABLES':
+        document.dispatchEvent(new CustomEvent('qa-sync-variables', { detail: msg.variables }));
+        sendResponse({ ok: true });
+        break;
+
       case 'STOP_CAPTURE':
         if (window.QAOverlay) window.QAOverlay.stop();
         sendResponse({ ok: true });

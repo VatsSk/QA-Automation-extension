@@ -76,7 +76,7 @@
                     "popup/flow.html", "popup/flow.css", "popup/flow.js",
                     "popup/component.html", "popup/component.css", "popup/component.js",
                     "scenario-builder/schema.js", "storage/storage.js",
-                    "api/api-client.js", "content/ui-injector.css", "assets/*.png"],
+                    "api/api-client.js", "content/ui-injector.css", "content/autocomplete.js", "assets/*.png"],
       "matches": ["<all_urls>"]
     }
   ],

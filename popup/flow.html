@@ -20,21 +20,20 @@
             <span class="status-text">Recording</span>
             <span class="status-dot">●</span>
           </div>
+          <button class="tool-btn icon-btn flow-settings-btn" id="btn-flow-settings" title="Flow Settings (Wait Times & Dynamic Variables)">
+            <span class="settings-gear-icon">⚙️</span>
+            <span class="settings-badge-dot hidden" id="header-var-badge">0</span>
+          </button>
           <button class="tool-btn icon-btn text-danger" id="btn-cancel" title="Cancel Recording" style="margin: 0; padding: 4px 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2);">✕</button>
         </div>
       </div>
       <div class="header-sub">
         <span class="step-count" id="step-count">0 Steps Recorded</span>
         <span class="autosave-status" id="autosave-status"></span>
-        <div class="default-wait">
-          <span>Default Wait:</span>
-          <input type="number" id="default-wait-input" value="5" min="0" max="60" />
-          <span>sec</span>
-        </div>
-        <div class="url-change-wait" style="margin-left: 12px; display: flex; gap: 4px; align-items: center; font-size: 11px; color: var(--text-muted);">
-          <span>URL Change Wait:</span>
-          <input type="number" id="url-change-wait-input" value="2000" min="0" step="100" style="width: 50px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 2px 4px; font-size: 11px; text-align: center;" />
-          <span>ms</span>
+        <div class="header-settings-summary" id="header-settings-summary" title="Click to view Flow Settings">
+          <span class="settings-pill" id="pill-default-wait" title="Default Wait">⏱️ 5s</span>
+          <span class="settings-pill" id="pill-url-wait" title="URL Change Wait">🔗 2000ms</span>
+          <span class="settings-pill pill-var" id="pill-var-count" title="Flow Variables"># 0 vars</span>
         </div>
       </div>
     </header>
@@ -90,6 +89,178 @@
       </div>
     </footer>
     
+    <!-- Flow Settings Modal (General & Variables) -->
+    <div id="flow-settings-modal" class="flow-modal hidden">
+      <div class="flow-modal-content settings-modal-content">
+        <!-- Settings Header -->
+        <div class="flow-modal-header">
+          <div class="modal-title-wrap">
+            <span class="modal-settings-icon">⚙️</span>
+            <div>
+              <h3 class="modal-title">Flow Settings</h3>
+              <p class="modal-subtitle">Configure flow execution delays and dynamic variables</p>
+            </div>
+          </div>
+          <button type="button" class="tool-btn icon-btn" id="btn-close-settings-modal" title="Close">✕</button>
+        </div>
+
+        <!-- Settings Tabs Navigation -->
+        <div class="settings-tabs-bar">
+          <button type="button" class="settings-tab-btn active" id="tab-btn-general" data-tab="general">
+            <span>⚙️ General Settings</span>
+          </button>
+          <button type="button" class="settings-tab-btn" id="tab-btn-variables" data-tab="variables">
+            <span># Flow Variables</span>
+            <span class="settings-tab-badge" id="settings-var-badge">0</span>
+          </button>
+        </div>
+
+        <!-- Tab 1: General Settings (Default Wait & URL Change Wait) -->
+        <div class="settings-tab-pane" id="tab-pane-general">
+          <div class="settings-section">
+            <div class="setting-item">
+              <div class="setting-info">
+                <label for="default-wait-input" class="setting-title">Default Wait Time</label>
+                <p class="setting-desc">Base pause time applied before executing each step to ensure element readiness.</p>
+              </div>
+              <div class="setting-control">
+                <input type="number" id="default-wait-input" class="form-input setting-input-sm" value="5" min="0" max="60" />
+                <span class="setting-unit">sec</span>
+              </div>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label for="url-change-wait-input" class="setting-title">URL Change Wait Time</label>
+                <p class="setting-desc">Stabilization delay applied when navigating to a new URL or page transition.</p>
+              </div>
+              <div class="setting-control">
+                <input type="number" id="url-change-wait-input" class="form-input setting-input-sm" value="2000" min="0" step="100" />
+                <span class="setting-unit">ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Flow Variables Manager -->
+        <div class="settings-tab-pane hidden" id="tab-pane-variables">
+          <div class="variables-pane-header">
+            <div>
+              <h4 style="font-size: 13px; font-weight: 600; color: #f8fafc;">Dynamic Flow Variables</h4>
+              <p style="font-size: 11px; color: #94a3b8;">Referenced in step values using <code style="color:#c4b5fd; background:rgba(108,92,231,0.2); padding:1px 4px; border-radius:3px;">#variableName</code></p>
+            </div>
+            <button type="button" class="tool-btn btn-primary" id="btn-open-add-var">+ Add Variable</button>
+          </div>
+
+          <!-- Add/Edit Variable Drawer / Sub-Form -->
+          <div id="var-form-card" class="var-form-card hidden">
+            <div class="var-form-header">
+              <h4 id="var-form-title">New Flow Variable</h4>
+              <button type="button" class="tool-btn icon-btn" id="btn-cancel-var-form" title="Cancel">✕</button>
+            </div>
+
+            <form id="var-form" onsubmit="return false;">
+              <div class="var-form-grid">
+                <!-- Name -->
+                <div class="form-group col-span-2">
+                  <label for="var-input-name" class="form-label required">
+                    Variable Name <span class="form-hint">(e.g. email, phone)</span>
+                  </label>
+                  <div class="input-with-prefix">
+                    <span class="input-prefix-icon">#</span>
+                    <input type="text" id="var-input-name" class="form-input" placeholder="email" autocomplete="off" spellcheck="false" />
+                  </div>
+                  <div class="form-error-msg hidden" id="var-name-error"></div>
+                </div>
+
+                <!-- Charset (replaces Type) -->
+                <div class="form-group">
+                  <label for="var-input-charset" class="form-label required">Charset</label>
+                  <select id="var-input-charset" class="form-select">
+                    <option value="ALPHANUMERIC">ALPHANUMERIC</option>
+                    <option value="LETTERS">LETTERS</option>
+                    <option value="DIGITS">DIGITS (Numbers)</option>
+                  </select>
+                </div>
+
+                <!-- Length -->
+                <div class="form-group">
+                  <label for="var-input-length" class="form-label required">
+                    Length <span class="form-hint">(1-256)</span>
+                  </label>
+                  <input type="number" id="var-input-length" class="form-input" min="1" max="256" value="10" />
+                </div>
+
+                <!-- Prefix -->
+                <div class="form-group">
+                  <label for="var-input-prefix" class="form-label">
+                    Prefix <span class="form-hint">(opt)</span>
+                  </label>
+                  <input type="text" id="var-input-prefix" class="form-input" placeholder="e.g. qa_" autocomplete="off" />
+                </div>
+
+                <!-- Suffix -->
+                <div class="form-group">
+                  <label for="var-input-suffix" class="form-label">
+                    Suffix <span class="form-hint">(opt)</span>
+                  </label>
+                  <input type="text" id="var-input-suffix" class="form-input" placeholder="e.g. @test.com" autocomplete="off" />
+                </div>
+              </div>
+
+              <!-- Live Preview -->
+              <div class="live-preview-box">
+                <div class="preview-header">
+                  <span class="preview-label">⚡ Live Preview</span>
+                  <button type="button" class="preview-refresh-btn" id="btn-refresh-preview" title="Generate another sample">🎲 Regenerate</button>
+                </div>
+                <div class="preview-value" id="var-live-preview">qa_a8k2m9p4x7@example.com</div>
+              </div>
+
+              <!-- Global Form Error Alert -->
+              <div class="form-error-alert hidden" id="var-form-alert"></div>
+
+              <!-- Form Actions -->
+              <div class="var-form-actions">
+                <button type="button" class="tool-btn" id="btn-discard-var">Cancel</button>
+                <button type="button" class="tool-btn btn-primary" id="btn-save-var">Save Variable</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Variables List Container -->
+          <div class="variables-list-container" id="variables-list-container">
+            <div class="variables-list" id="variables-list"></div>
+            <div class="variables-empty hidden" id="variables-empty">
+              <div class="empty-var-icon">🏷️</div>
+              <h4>No flow variables defined yet</h4>
+              <p>Create dynamic variables like <code>email</code> or <code>phone</code> to generate random test data during execution.</p>
+              <button type="button" class="tool-btn btn-primary" id="btn-empty-add-var" style="margin-top: 10px;">+ Create First Variable</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings Modal Footer -->
+        <div class="settings-modal-footer">
+          <span class="settings-footer-hint">Settings are auto-saved to this flow</span>
+          <button type="button" class="tool-btn btn-primary" id="btn-done-settings">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step Editor Floating # Autocomplete Popover -->
+    <div id="step-var-autocomplete" class="step-var-autocomplete hidden">
+      <div class="step-var-header">
+        <span>Insert Variable</span>
+        <span class="step-var-hint">↑↓ Navigate · ↵ Select</span>
+      </div>
+      <div class="step-var-list" id="step-var-list"></div>
+      <div class="step-var-footer" id="step-var-manage-btn">
+        <span class="plus-icon">+</span>
+        <span>Manage Flow Variables...</span>
+      </div>
+    </div>
+
     <!-- Custom Modal for confirmations -->
     <div id="custom-modal" class="custom-modal hidden">
       <div class="custom-modal-content">

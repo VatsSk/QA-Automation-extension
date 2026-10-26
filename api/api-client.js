@@ -5,7 +5,6 @@
 //const API_BASE_URL = 'http://3.7.136.248:8088';
 //const API_BASE_URL = 'https://dh72194711i41.cloudfront.net';
  // TODO: Make configurable, env var, or detect from context
-  
 const ApiClient = {
   async saveRun({ projectId, moduleId, authToken, payload }) {
     if (!projectId || !moduleId) {
@@ -105,6 +104,26 @@ const ApiClient = {
       },
       body: JSON.stringify(payload)
 
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API ${res.status}: ${err}`);
+    }
+    return res.json();
+  },
+
+  async getFlow({ flowId, authToken }) {
+    if (!flowId) {
+      throw new Error('Cannot get flow: Flow ID is missing.');
+    }
+
+    const res = await fetch(`${API_BASE_URL}/api/flows/${flowId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+      }
     });
 
     if (!res.ok) {

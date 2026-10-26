@@ -236,6 +236,7 @@
     document.addEventListener('pointerup', onSmartClick, true);
     document.addEventListener('click', onSmartClick, true);
     document.addEventListener('keydown', onSmartKeyDown, true);
+    document.addEventListener('qa-variable-inserted', onVariableInserted, true);
   }
 
   function unbindSmartListeners() {
@@ -245,6 +246,15 @@
     document.removeEventListener('pointerup', onSmartClick, true);
     document.removeEventListener('click', onSmartClick, true);
     document.removeEventListener('keydown', onSmartKeyDown, true);
+    document.removeEventListener('qa-variable-inserted', onVariableInserted, true);
+  }
+
+  function onVariableInserted(e) {
+    if (!smartRecording || smartPaused || smartVerification || smartHoverCapture) return;
+    const detail = e.detail;
+    if (!detail || !detail.element) return;
+    console.log('[Overlay] Dynamic variable inserted:', detail.token);
+    dispatchSmartStep('type', detail.element, detail.token);
   }
 
   function onSmartKeyDown(e) {
