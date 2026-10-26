@@ -28,6 +28,7 @@ let targetTabId = null;         // The tab the user is recording against
 let pendingMessages = [];       // Queue for messages received while popup is closed
 let panelPort = null;            // Persistent port to the side panel
 let activeWindowId = null;       // The ID of the window spawned by the extension
+let cachedFlowVariables = {};   // Flow variables cache for in-page autocomplete
 
 // ── Recording state tracked in the SW so we can auto-reinject after navigation ─
 // tabId -> { scenarioId, isRecording, isPaused, tabRef, parentTabId, isVerification, isHoverCapture }
@@ -692,6 +693,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
     // Content script requests focus back on the recorder — restore overlay if minimized
+    case 'SYNC_VARIABLES': {
+      cachedFlowVariables = msg.variables || {};
+      chrome.storage.local.set({ flow_variables: cachedFlowVariables });
+      recordingState.forEach((st, tId) => {
+        chrome.tabs.sendMessage(tId, { type: 'SYNC_VARIABLES', variables: cachedFlowVariables }).catch(() => {});
+      });
+      sendResponse({ ok: true });
+      break;
+    }
+
+    case 'GET_FLOW_VARIABLES': {
+      if (cachedFlowVariables && Object.keys(cachedFlowVariables).length > 0) {
+        sendResponse({ variables: cachedFlowVariables });
+      } else {
+        chrome.storage.local.get(['flow_variables', 'flow_draft'], (res) => {
+          const vars = res.flow_variables || res.flow_draft?.variables || {};
+          cachedFlowVariables = vars;
+          sendResponse({ variables: vars });
+        });
+        return true;
+      }
+      break;
+    }
+
+    case 'ADD_FLOW_VARIABLE': {
+      if (msg.name && msg.definition) {
+        if (!cachedFlowVariables) cachedFlowVariables = {};
+        cachedFlowVariables[msg.name] = msg.definition;
+        chrome.storage.local.set({ flow_variables: cachedFlowVariables });
+        notifyPopup({
+          type: 'ADD_FLOW_VARIABLE',
+          name: msg.name,
+          definition: msg.definition
+        });
+        recordingState.forEach((st, tId) => {
+          chrome.tabs.sendMessage(tId, { type: 'SYNC_VARIABLES', variables: cachedFlowVariables }).catch(() => {});
+        });
+      }
+      sendResponse({ ok: true });
+      break;
+    }
+
     case 'FOCUS_RECORDER': {
       if (targetTabId) {
         chrome.tabs.sendMessage(targetTabId, { type: 'FOCUS_RECORDER' }).catch(() => {});
@@ -753,6 +796,7 @@ async function ensureContentScript(tabId) {
     for (const file of [
       'locator-engine/locator-generator.js',
       'content/overlay.js',
+      'content/autocomplete.js',
       'content/content.js'
     ]) {
       await chrome.scripting.executeScript({ target: { tabId }, files: [file] });

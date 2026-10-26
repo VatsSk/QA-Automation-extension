@@ -18,7 +18,8 @@ let state = {
   createdAt: null,
   createdBy: null,
   loginUrl: null,
-  authToken: null
+  authToken: null,
+  variables: {} // Dynamic flow variables map: { [name]: { type, length, charset, prefix, suffix } }
 };
 
 let undoStack = [];
@@ -44,7 +45,48 @@ const els = {
   btnHoverCapture: document.getElementById('btn-hover-capture'),
   btnCaptureUrl: document.getElementById('btn-capture-url'),
   hoverBanner: document.getElementById('hover-banner'),
-  autosaveStatus: document.getElementById('autosave-status')
+  autosaveStatus: document.getElementById('autosave-status'),
+  btnFlowVariables: document.getElementById('btn-flow-variables'),
+  varCountBadge: document.getElementById('var-count-badge'),
+  flowVariablesModal: document.getElementById('flow-variables-modal'),
+  btnCloseVarsModal: document.getElementById('btn-close-vars-modal'),
+  btnOpenAddVar: document.getElementById('btn-open-add-var'),
+  btnEmptyAddVar: document.getElementById('btn-empty-add-var'),
+  variablesListContainer: document.getElementById('variables-list-container'),
+  variablesList: document.getElementById('variables-list'),
+  variablesEmpty: document.getElementById('variables-empty'),
+  varFormCard: document.getElementById('var-form-card'),
+  varFormTitle: document.getElementById('var-form-title'),
+  btnCancelVarForm: document.getElementById('btn-cancel-var-form'),
+  varInputName: document.getElementById('var-input-name'),
+  varInputType: document.getElementById('var-input-type'),
+  varInputLength: document.getElementById('var-input-length'),
+  varInputCharset: document.getElementById('var-input-charset'),
+  varInputPrefix: document.getElementById('var-input-prefix'),
+  varInputSuffix: document.getElementById('var-input-suffix'),
+  varLivePreview: document.getElementById('var-live-preview'),
+  btnRefreshPreview: document.getElementById('btn-refresh-preview'),
+  varNameError: document.getElementById('var-name-error'),
+  varFormAlert: document.getElementById('var-form-alert'),
+  btnDiscardVar: document.getElementById('btn-discard-var'),
+  btnSaveVar: document.getElementById('btn-save-var'),
+  stepVarAutocomplete: document.getElementById('step-var-autocomplete'),
+  stepVarList: document.getElementById('step-var-list'),
+  stepVarManageBtn: document.getElementById('step-var-manage-btn'),
+  btnFlowSettings: document.getElementById('btn-flow-settings'),
+  headerVarBadge: document.getElementById('header-var-badge'),
+  flowSettingsModal: document.getElementById('flow-settings-modal'),
+  btnCloseSettingsModal: document.getElementById('btn-close-settings-modal'),
+  btnDoneSettings: document.getElementById('btn-done-settings'),
+  tabBtnGeneral: document.getElementById('tab-btn-general'),
+  tabBtnVariables: document.getElementById('tab-btn-variables'),
+  tabPaneGeneral: document.getElementById('tab-pane-general'),
+  tabPaneVariables: document.getElementById('tab-pane-variables'),
+  settingsVarBadge: document.getElementById('settings-var-badge'),
+  pillDefaultWait: document.getElementById('pill-default-wait'),
+  pillUrlWait: document.getElementById('pill-url-wait'),
+  pillVarCount: document.getElementById('pill-var-count'),
+  headerSettingsSummary: document.getElementById('header-settings-summary'),
 };
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -175,6 +217,7 @@ async function loadSession() {
     state.defaultWait = draft.defaultWait ?? 5;
     state.urlChangeWait = draft.urlChangeWait ?? 2000;
     state.steps = draft.steps || [];
+    state.variables = draft.variables || {};
     state.flowId = draft.flowId || data.flowId;
     if (draft.version !== undefined) state.version = draft.version;
     if (draft.createdAt !== undefined) state.createdAt = draft.createdAt;
@@ -186,6 +229,7 @@ async function loadSession() {
     state.flowName = data.existingFlow.name || 'Edit Flow';
     state.defaultWait = data.existingFlow.defaultWait ? (data.existingFlow.defaultWait / 1000) : 5;
     state.urlChangeWait = data.existingFlow.urlChangeWait ?? 2000;
+    state.variables = data.existingFlow.variables || {};
     if (data.existingFlow.version !== undefined) state.version = data.existingFlow.version;
     if (data.existingFlow.createdAt !== undefined) state.createdAt = data.existingFlow.createdAt;
     if (data.existingFlow.createdBy !== undefined) state.createdBy = data.existingFlow.createdBy;
@@ -267,6 +311,7 @@ async function loadSession() {
     // New flow: add default navigate step
     state.flowName = 'New Flow';
     state.steps = [];
+    state.variables = {};
     if (state.loginUrl) {
       state.steps.push({
         id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -349,6 +394,15 @@ function handleIncomingMessage(msg) {
   } else if (msg.type === 'TOGGLE_HOVER_MODE_OFF') {
     state.isHoverCaptureMode = false;
     render();
+  } else if (msg.type === 'ADD_FLOW_VARIABLE') {
+    if (msg.name && msg.definition) {
+      state.variables = state.variables || {};
+      state.variables[msg.name] = msg.definition;
+      persistDraft();
+      syncVariablesToTabs();
+      renderVariablesManager();
+      updateVariableCountBadge();
+    }
   } else if (msg.type === 'URL_CAPTURED') {
     if (state.isRecording && !state.isPaused) {
       console.log('[Flow] Shortcut received: URL_CAPTURED', msg.data.url);
@@ -593,9 +647,10 @@ function persistDraft() {
     flowName: state.flowName,
     defaultWait: state.defaultWait,
     urlChangeWait: state.urlChangeWait,
+    variables: state.variables || {},
     steps: state.steps
   };
-  chrome.storage.local.set({ flow_draft: draft });
+  chrome.storage.local.set({ flow_draft: draft, flow_variables: state.variables || {} });
   setAutosaveStatus('saved', '✓ Draft saved');
 }
 
@@ -622,6 +677,605 @@ window.addEventListener('beforeunload', () => {
     persistDraft();
   }
 });
+
+
+// ── Flow Variables Manager & Step Autocomplete ────────────────────────────────
+
+// ── Settings Modal & Tabs Controller ──────────────────────────────────────────
+function openSettingsModal(tabName = 'general') {
+  if (!els.flowSettingsModal) return;
+  switchSettingsTab(tabName);
+  els.defaultWait.value = state.defaultWait;
+  els.urlChangeWait.value = state.urlChangeWait;
+  renderVariablesManager();
+  closeVariableForm();
+  els.flowSettingsModal.classList.remove('hidden');
+}
+
+function closeSettingsModal() {
+  if (els.flowSettingsModal) {
+    els.flowSettingsModal.classList.add('hidden');
+  }
+  closeVariableForm();
+}
+
+function switchSettingsTab(tabName) {
+  if (tabName === 'variables') {
+    if (els.tabBtnGeneral) els.tabBtnGeneral.classList.remove('active');
+    if (els.tabBtnVariables) els.tabBtnVariables.classList.add('active');
+    if (els.tabPaneGeneral) els.tabPaneGeneral.classList.add('hidden');
+    if (els.tabPaneVariables) els.tabPaneVariables.classList.remove('hidden');
+    renderVariablesManager();
+  } else {
+    if (els.tabBtnGeneral) els.tabBtnGeneral.classList.add('active');
+    if (els.tabBtnVariables) els.tabBtnVariables.classList.remove('active');
+    if (els.tabPaneGeneral) els.tabPaneGeneral.classList.remove('hidden');
+    if (els.tabPaneVariables) els.tabPaneVariables.classList.add('hidden');
+  }
+}
+
+function updateSettingsSummaryPills() {
+  const varCount = Object.keys(state.variables || {}).length;
+  if (els.pillDefaultWait) els.pillDefaultWait.textContent = `⏱️ ${state.defaultWait}s`;
+  if (els.pillUrlWait) els.pillUrlWait.textContent = `🔗 ${state.urlChangeWait}ms`;
+  if (els.pillVarCount) els.pillVarCount.textContent = `# ${varCount} vars`;
+  if (els.settingsVarBadge) els.settingsVarBadge.textContent = varCount;
+  if (els.headerVarBadge) {
+    els.headerVarBadge.textContent = varCount;
+    if (varCount > 0) els.headerVarBadge.classList.remove('hidden');
+    else els.headerVarBadge.classList.add('hidden');
+  }
+}
+
+// ── Variable Token Detection & Visual Chip Renderer ──────────────────────────
+function getVariableFromText(val) {
+  if (!val || typeof val !== 'string') return null;
+  const match = val.match(/#([A-Za-z][A-Za-z0-9_]*)/);
+  if (!match) return null;
+  const varName = match[1];
+  const def = (state.variables && state.variables[varName]) ? state.variables[varName] : null;
+  return { varName, def };
+}
+
+function updateFieldVariableVisuals(input, clearBtn = null) {
+  const control = input.closest('.step-field-control') || input.parentElement;
+  if (!control) return;
+
+  if (!clearBtn) clearBtn = control.querySelector('.step-input-clear-btn');
+
+  const rawVal = input.value || '';
+  const valInfo = getVariableFromText(rawVal);
+
+  if (clearBtn) {
+    if (rawVal.trim()) {
+      clearBtn.classList.remove('hidden');
+    } else {
+      clearBtn.classList.add('hidden');
+    }
+  }
+
+  if (valInfo) {
+    input.classList.add('step-input-variable');
+    const { varName, def } = valInfo;
+    const preview = def ? generatePreviewValue(def) : '';
+    input.title = def
+      ? `Flow Variable: #${varName} (${def.type || 'STRING'}) · Sample: ${preview}`
+      : `Flow Variable: #${varName}`;
+  } else {
+    input.classList.remove('step-input-variable');
+    input.title = '';
+  }
+}
+
+// Backward-compatibility wrapper
+function updateInputVariableVisuals(input) {
+  updateFieldVariableVisuals(input);
+}
+
+let editingVariableName = null;
+const VARIABLE_NAME_REGEX = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+function validateVariableName(name, existingVars = {}, currentEditingName = null) {
+  if (!name || typeof name !== 'string') {
+    return { valid: false, error: 'Variable name is required.' };
+  }
+  const trimmed = name.trim();
+  if (trimmed.startsWith('#')) {
+    return { valid: false, error: 'Variable name must not include "#" prefix.' };
+  }
+  if (!VARIABLE_NAME_REGEX.test(trimmed)) {
+    return { valid: false, error: 'Name must start with a letter and contain only letters, digits, and underscores (no spaces).' };
+  }
+  const lower = trimmed.toLowerCase();
+  const currentLower = currentEditingName ? currentEditingName.toLowerCase() : null;
+  for (const key of Object.keys(existingVars || {})) {
+    if (key.toLowerCase() === lower && key.toLowerCase() !== currentLower) {
+      return { valid: false, error: `Variable "${trimmed}" already exists (case-insensitive).` };
+    }
+  }
+  return { valid: true, error: null, canonicalName: trimmed };
+}
+
+function validateVariableConfig({ name, type, length, charset, prefix, suffix }, existingVars = {}, currentEditingName = null) {
+  const nameCheck = validateVariableName(name, existingVars, currentEditingName);
+  if (!nameCheck.valid) return nameCheck;
+
+  if (type !== 'STRING' && type !== 'NUMBER') {
+    return { valid: false, error: 'Type must be STRING or NUMBER.' };
+  }
+
+  const numLen = parseInt(length, 10);
+  if (isNaN(numLen) || numLen < 1 || numLen > 256) {
+    return { valid: false, error: 'Length must be a positive integer between 1 and 256.' };
+  }
+
+  if (type === 'NUMBER') {
+    if (charset !== 'DIGITS') {
+      return { valid: false, error: 'NUMBER type must have charset DIGITS.' };
+    }
+  } else {
+    if (!['ALPHANUMERIC', 'LETTERS', 'DIGITS'].includes(charset)) {
+      return { valid: false, error: 'Charset must be ALPHANUMERIC, LETTERS, or DIGITS.' };
+    }
+  }
+
+  return {
+    valid: true,
+    error: null,
+    name: nameCheck.canonicalName,
+    data: {
+      type,
+      length: numLen,
+      charset,
+      prefix: (prefix && prefix.trim()) ? prefix.trim() : null,
+      suffix: (suffix && suffix.trim()) ? suffix.trim() : null
+    }
+  };
+}
+
+function generatePreviewValue({ type, length, charset, prefix, suffix }) {
+  const len = Math.max(1, Math.min(256, parseInt(length, 10) || 10));
+  let chars = '0123456789abcdefghijklmnopqrstuvwxyz';
+  if (type === 'NUMBER' || charset === 'DIGITS') {
+    chars = '0123456789';
+  } else if (charset === 'LETTERS') {
+    chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  } else if (charset === 'ALPHANUMERIC') {
+    chars = '0123456789abcdefghijklmnopqrstuvwxyz';
+  }
+
+  let body = '';
+  for (let i = 0; i < len; i++) {
+    const idx = Math.floor(Math.random() * chars.length);
+    body += chars[idx];
+  }
+  return `${prefix || ''}${body}${suffix || ''}`;
+}
+
+function updateVariableCountBadge() {
+  const count = Object.keys(state.variables || {}).length;
+  if (els.varCountBadge) {
+    els.varCountBadge.textContent = count;
+  }
+}
+
+function openVariablesModal() {
+  openSettingsModal('variables');
+}
+
+function closeVariablesModal() {
+  closeSettingsModal();
+}
+
+function openAddVariableForm() {
+  editingVariableName = null;
+  els.varFormTitle.textContent = 'New Flow Variable';
+  els.varInputName.value = '';
+  els.varInputName.disabled = false;
+  if (els.varInputType) els.varInputType.value = 'STRING';
+  els.varInputLength.value = '10';
+  if (els.varInputCharset) {
+    els.varInputCharset.value = 'ALPHANUMERIC';
+    els.varInputCharset.disabled = false;
+  }
+  els.varInputPrefix.value = '';
+  els.varInputSuffix.value = '';
+  els.varNameError.classList.add('hidden');
+  els.varFormAlert.classList.add('hidden');
+  els.btnSaveVar.disabled = false;
+  updateFormLivePreview();
+  els.varFormCard.classList.remove('hidden');
+  if (els.tabPaneVariables) {
+    els.tabPaneVariables.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  setTimeout(() => els.varInputName.focus(), 50);
+}
+
+function openEditVariableForm(varName) {
+  const def = state.variables[varName];
+  if (!def) return;
+  editingVariableName = varName;
+  els.varFormTitle.textContent = `Edit Variable: #${varName}`;
+  els.varInputName.value = varName;
+  els.varInputName.disabled = false;
+  if (els.varInputType) els.varInputType.value = def.type || 'STRING';
+  els.varInputLength.value = def.length || 10;
+  if (els.varInputCharset) {
+    els.varInputCharset.value = def.charset || (def.type === 'NUMBER' ? 'DIGITS' : 'ALPHANUMERIC');
+    els.varInputCharset.disabled = false;
+  }
+  els.varInputPrefix.value = def.prefix || '';
+  els.varInputSuffix.value = def.suffix || '';
+  els.varNameError.classList.add('hidden');
+  els.varFormAlert.classList.add('hidden');
+  els.btnSaveVar.disabled = false;
+  updateFormLivePreview();
+  els.varFormCard.classList.remove('hidden');
+  if (els.tabPaneVariables) {
+    els.tabPaneVariables.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  setTimeout(() => els.varInputName.focus(), 50);
+}
+
+function closeVariableForm() {
+  if (els.varFormCard) {
+    els.varFormCard.classList.add('hidden');
+  }
+  editingVariableName = null;
+}
+
+function updateFormLivePreview() {
+  const charset = els.varInputCharset ? els.varInputCharset.value : 'ALPHANUMERIC';
+  const type = charset === 'DIGITS' ? 'NUMBER' : 'STRING';
+  const length = parseInt(els.varInputLength.value, 10);
+  const prefix = els.varInputPrefix.value;
+  const suffix = els.varInputSuffix.value;
+
+  const sample = generatePreviewValue({
+    type,
+    length: isNaN(length) ? 10 : length,
+    charset,
+    prefix,
+    suffix
+  });
+  if (els.varLivePreview) {
+    els.varLivePreview.textContent = sample;
+  }
+
+  const name = els.varInputName.value.trim();
+  const validation = validateVariableConfig({
+    name,
+    type,
+    length,
+    charset,
+    prefix,
+    suffix
+  }, state.variables, editingVariableName);
+
+  if (!validation.valid) {
+    els.varFormAlert.textContent = validation.error;
+    els.varFormAlert.classList.remove('hidden');
+    els.btnSaveVar.disabled = true;
+  } else {
+    els.varFormAlert.classList.add('hidden');
+    els.btnSaveVar.disabled = false;
+  }
+}
+
+function saveVariableFromForm() {
+  const name = els.varInputName.value.trim();
+  const charset = els.varInputCharset ? els.varInputCharset.value : 'ALPHANUMERIC';
+  const type = charset === 'DIGITS' ? 'NUMBER' : 'STRING';
+  const length = parseInt(els.varInputLength.value, 10);
+  const prefix = els.varInputPrefix.value;
+  const suffix = els.varInputSuffix.value;
+
+  const validation = validateVariableConfig({
+    name,
+    type,
+    length,
+    charset,
+    prefix,
+    suffix
+  }, state.variables, editingVariableName);
+
+  if (!validation.valid) {
+    els.varFormAlert.textContent = validation.error;
+    els.varFormAlert.classList.remove('hidden');
+    return;
+  }
+
+  state.variables = state.variables || {};
+
+  // If renaming an existing variable, update references across steps
+  if (editingVariableName && editingVariableName !== validation.name) {
+    delete state.variables[editingVariableName];
+    const oldToken = `#${editingVariableName}`;
+    const newToken = `#${validation.name}`;
+    state.steps.forEach((step) => {
+      if (typeof step.value === 'string' && step.value.includes(oldToken)) {
+        step.value = step.value.split(oldToken).join(newToken);
+      }
+    });
+  }
+
+  state.variables[validation.name] = validation.data;
+  closeVariableForm();
+  renderVariablesManager();
+  updateVariableCountBadge();
+  persistDraft();
+  syncVariablesToTabs();
+  render();
+}
+
+function deleteVariable(varName) {
+  const token = `#${varName}`;
+  const usedCount = state.steps.filter(s => typeof s.value === 'string' && s.value.includes(token)).length;
+  const confirmMsg = usedCount > 0
+    ? `Variable "${token}" is currently referenced in ${usedCount} step(s). Are you sure you want to delete it?`
+    : `Are you sure you want to delete variable "${token}"?`;
+
+  showModal('Delete Variable', confirmMsg, () => {
+    delete state.variables[varName];
+    renderVariablesManager();
+    updateVariableCountBadge();
+    persistDraft();
+    syncVariablesToTabs();
+  });
+}
+
+function syncVariablesToTabs() {
+  chrome.storage.local.set({ flow_variables: state.variables || {} });
+  chrome.runtime.sendMessage({
+    type: 'SYNC_VARIABLES',
+    variables: state.variables || {}
+  }, () => {
+    if (chrome.runtime.lastError) {}
+  });
+  if (state.targetTabId) {
+    chrome.tabs.sendMessage(state.targetTabId, {
+      type: 'SYNC_VARIABLES',
+      variables: state.variables || {}
+    }).catch(() => {});
+  }
+}
+
+function renderVariablesManager() {
+  updateVariableCountBadge();
+  if (!els.variablesList || !els.variablesEmpty) return;
+
+  const keys = Object.keys(state.variables || {});
+  if (keys.length === 0) {
+    els.variablesEmpty.classList.remove('hidden');
+    els.variablesList.innerHTML = '';
+    return;
+  }
+
+  els.variablesEmpty.classList.add('hidden');
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  let html = '';
+  keys.forEach((varName) => {
+    const def = state.variables[varName];
+    const isNum = def.type === 'NUMBER';
+    const typeBadgeClass = isNum ? 'var-badge-number' : 'var-badge-string';
+    const sample = generatePreviewValue(def);
+
+    html += `
+      <div class="var-card" data-name="${esc(varName)}">
+        <div class="var-card-top">
+          <div class="var-name-group">
+            <div class="var-name-row">
+              <span class="var-token" title="#${esc(varName)}">#${esc(varName)}</span>
+            </div>
+            <div class="var-badges-row">
+              <span class="var-badge ${typeBadgeClass}">${esc(def.type || 'STRING')}</span>
+              <span class="var-badge var-badge-detail">len: ${def.length || 10}</span>
+              <span class="var-badge var-badge-detail">${esc(def.charset || (isNum ? 'DIGITS' : 'ALPHANUMERIC'))}</span>
+              ${def.prefix ? `<span class="var-badge var-badge-detail" title="Prefix: ${esc(def.prefix)}">pre: "${esc(def.prefix)}"</span>` : ''}
+              ${def.suffix ? `<span class="var-badge var-badge-detail" title="Suffix: ${esc(def.suffix)}">suf: "${esc(def.suffix)}"</span>` : ''}
+            </div>
+          </div>
+          <div class="var-card-actions">
+            <button type="button" class="var-btn-action edit" data-name="${esc(varName)}" title="Edit Variable">✏️</button>
+            <button type="button" class="var-btn-action delete" data-name="${esc(varName)}" title="Delete Variable">🗑️</button>
+          </div>
+        </div>
+        <div class="var-preview-line" title="Sample: ${esc(sample)}">
+          <span class="var-preview-label">Sample:</span>
+          <span class="var-preview-val">${esc(sample)}</span>
+        </div>
+      </div>
+    `;
+  });
+
+  els.variablesList.innerHTML = html;
+
+  els.variablesList.querySelectorAll('.var-btn-action.edit').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openEditVariableForm(btn.dataset.name);
+    });
+  });
+
+  els.variablesList.querySelectorAll('.var-btn-action.delete').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteVariable(btn.dataset.name);
+    });
+  });
+}
+
+// ── Step Editor In-Extension # Autocomplete ──────────────────────────────────
+let activeAutocompleteInput = null;
+
+function hideStepAutocomplete() {
+  if (els.stepVarAutocomplete) {
+    els.stepVarAutocomplete.classList.add('hidden');
+    els.stepVarAutocomplete.style.display = 'none';
+  }
+  activeAutocompleteInput = null;
+}
+
+function attachStepAutocomplete(input, step, fieldName) {
+  if (input._hasStepAutocomplete) return;
+  input._hasStepAutocomplete = true;
+
+  let isPopoverOpen = false;
+  let activeQuery = '';
+  let queryStart = -1;
+  let selectedIdx = 0;
+  let matches = [];
+
+  function getStepMatches(query) {
+    const all = Object.keys(state.variables || {});
+    if (!query) return all;
+    const q = query.toLowerCase();
+    const starts = [];
+    const contains = [];
+    for (const name of all) {
+      const lower = name.toLowerCase();
+      if (lower.startsWith(q)) starts.push(name);
+      else if (lower.includes(q)) contains.push(name);
+    }
+    return [...starts, ...contains];
+  }
+
+  function hidePopover() {
+    isPopoverOpen = false;
+    if (activeAutocompleteInput === input) {
+      hideStepAutocomplete();
+    }
+  }
+
+  function showPopover() {
+    activeAutocompleteInput = input;
+    matches = getStepMatches(activeQuery);
+    selectedIdx = 0;
+    renderStepPopover();
+    positionStepPopover();
+    els.stepVarAutocomplete.classList.remove('hidden');
+    els.stepVarAutocomplete.style.display = 'flex';
+    isPopoverOpen = true;
+  }
+
+  function positionStepPopover() {
+    const rect = input.getBoundingClientRect();
+    const popWidth = Math.min(240, Math.max(180, Math.round(rect.width)));
+    let top = rect.bottom + 3;
+    let left = rect.left;
+    if (left + popWidth > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - popWidth - 8);
+    }
+    if (top + 180 > window.innerHeight) {
+      top = Math.max(8, rect.top - 184);
+    }
+    els.stepVarAutocomplete.style.width = `${popWidth}px`;
+    els.stepVarAutocomplete.style.top = `${top}px`;
+    els.stepVarAutocomplete.style.left = `${left}px`;
+  }
+
+  function renderStepPopover() {
+    const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let html = '';
+    if (matches.length === 0) {
+      html = `<div style="padding: 8px 10px; color: var(--text-muted); text-align: center; font-size: 11px;">No variables matching "#${esc(activeQuery)}"</div>`;
+    } else {
+      matches.forEach((name, idx) => {
+        const def = state.variables[name] || {};
+        const isSel = idx === selectedIdx;
+        const isNum = def.type === 'NUMBER';
+        const typeClass = isNum ? 'var-badge-number' : 'var-badge-string';
+        const typeLabel = isNum ? 'NUM' : 'STR';
+        const preview = def ? generatePreviewValue(def) : '';
+        html += `
+          <div class="step-var-item ${isSel ? 'is-selected' : ''}" data-name="${esc(name)}" title="Variable: #${esc(name)}${preview ? ' · Sample: ' + esc(preview) : ''}">
+            <div class="step-var-item-name">
+              <span class="hash">#</span><span>${esc(name)}</span>
+            </div>
+            <span class="var-badge ${typeClass}">${typeLabel}</span>
+          </div>
+        `;
+      });
+    }
+    els.stepVarList.innerHTML = html;
+
+    els.stepVarList.querySelectorAll('.step-var-item').forEach((item) => {
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const varName = item.dataset.name;
+        if (varName) insertVarIntoInput(varName);
+      });
+    });
+  }
+
+  function insertVarIntoInput(varName) {
+    const text = input.value || '';
+    let before = text.slice(0, queryStart);
+    let after = text.slice(input.selectionStart);
+
+    // Strip accidental leading whitespace before the variable so it never leaves an empty space before #
+    if (!before.trim()) {
+      before = '';
+    } else {
+      before = before.trimEnd() + ' ';
+    }
+    if (!after.trim()) {
+      after = '';
+    }
+
+    const newValue = (before + '#' + varName + after).trimStart();
+    input.value = newValue;
+    const newPos = before.length + 1 + varName.length;
+    try {
+      input.setSelectionRange(newPos, newPos);
+    } catch (_) {}
+    step[fieldName] = newValue;
+    updateFieldVariableVisuals(input);
+    pushState();
+    scheduleAutoSave();
+    hidePopover();
+  }
+
+  input.addEventListener('input', () => {
+    const text = input.value || '';
+    const caret = input.selectionStart;
+    const textBefore = text.slice(0, caret);
+    const match = textBefore.match(/(?:^|[^\w])#([A-Za-z0-9_]*)$/);
+    if (match) {
+      activeQuery = match[1];
+      queryStart = caret - activeQuery.length - 1;
+      showPopover();
+    } else {
+      hidePopover();
+    }
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (!isPopoverOpen) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIdx = (selectedIdx + 1) % Math.max(1, matches.length);
+      renderStepPopover();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIdx = (selectedIdx - 1 + matches.length) % Math.max(1, matches.length);
+      renderStepPopover();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      if (matches[selectedIdx]) {
+        e.preventDefault();
+        insertVarIntoInput(matches[selectedIdx]);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      hidePopover();
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    setTimeout(hidePopover, 220);
+  });
+}
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
 function mapLocalStepToBackend(step, index) {
@@ -981,6 +1635,8 @@ function render() {
   const prevScrollTop = container ? container.scrollTop : 0;
   els.flowName.value = state.flowName;
   els.stepCount.textContent = `${state.steps.length} Steps Recorded`;
+  updateVariableCountBadge();
+  updateSettingsSummaryPills();
   els.defaultWait.value = state.defaultWait;
   els.urlChangeWait.value = state.urlChangeWait;
   
@@ -1176,6 +1832,74 @@ function exitInsertMode() {
 }
 
 
+
+function createValueFieldRow(label, step, fieldName = 'value', placeholder = 'Value or type # for variable...') {
+  const row = document.createElement('div');
+  row.className = 'step-field-row';
+  let val = step[fieldName] || '';
+  if (typeof val === 'string' && val.trim().startsWith('#') && val.startsWith(' ')) {
+    val = val.trim();
+    step[fieldName] = val;
+  }
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  
+  row.innerHTML = `
+    <div class="step-field-label">${label}</div>
+    <div class="step-field-control">
+      <div class="step-input-wrap">
+        <input type="text" class="step-input value-update" data-field="${fieldName}" value="${esc(val)}" placeholder="${placeholder}" autocomplete="off" spellcheck="false">
+        <div class="step-input-actions">
+          <button type="button" class="step-input-clear-btn hidden" title="Clear / Reset value">✕</button>
+          <button type="button" class="step-input-var-btn" title="Pick flow variable (#)">#</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const input = row.querySelector('.step-input');
+  const clearBtn = row.querySelector('.step-input-clear-btn');
+  const varBtn = row.querySelector('.step-input-var-btn');
+
+  // Attach autocomplete
+  attachStepAutocomplete(input, step, fieldName);
+
+  // Update visuals immediately
+  updateFieldVariableVisuals(input, clearBtn);
+
+  // Listen to input changes in real time
+  input.addEventListener('input', () => {
+    updateFieldVariableVisuals(input, clearBtn);
+  });
+
+  // Clear button click
+  clearBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    input.value = '';
+    step[fieldName] = '';
+    updateFieldVariableVisuals(input, clearBtn);
+    pushState();
+    scheduleAutoSave();
+    input.focus();
+  });
+
+  // '#' button click to open autocomplete or trigger selection
+  varBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const curVal = (input.value || '').trim();
+    if (!curVal || /^#[A-Za-z0-9_]*$/.test(curVal)) {
+      // If empty or already a single variable, reset to '#' to easily pick a new one
+      input.value = '#';
+    } else if (!curVal.endsWith('#')) {
+      input.value = curVal + ' #';
+    }
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  return row;
+}
+
 function createFieldRow(label, inputHtml) {
   const row = document.createElement('div');
   row.className = 'step-field-row';
@@ -1270,7 +1994,7 @@ function createStepCard(step, index) {
   }
   
   if (step.type === 'type' || step.type === 'select') {
-    body.appendChild(createFieldRow('Value', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
+    body.appendChild(createValueFieldRow('Value', step, 'value', 'Value or type # for variable...'));
   } else if (step.type === 'checkbox') {
     body.appendChild(createFieldRow('State', `
       <select class="step-input value-update" data-field="value">
@@ -1287,10 +2011,10 @@ function createStepCard(step, index) {
     `));
     // If text equals or similar, we might need a value field
     if (['Image Source', 'Alt Text', 'Value', 'Text Equals', 'Selected Value', 'Contains', 'Text Not Equals', 'Tooltip Text'].includes(step.verificationType)) {
-      body.appendChild(createFieldRow('Expected', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}" placeholder="Expected value...">`));
+      body.appendChild(createValueFieldRow('Expected', step, 'value', 'Expected value or type #...'));
     }
   } else if (step.type === 'upload') {
-    body.appendChild(createFieldRow('File', `<input type="text" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
+    body.appendChild(createValueFieldRow('File', step, 'value', 'File path or #variable...'));
   } else if (step.type === 'date') {
     body.appendChild(createFieldRow('Value', `<input type="date" class="step-input value-update" data-field="value" value="${esc(step.value)}">`));
   }
@@ -1333,6 +2057,11 @@ function bindCardEvents(card, step, index) {
 
   // Value updates
   card.querySelectorAll('.value-update').forEach(input => {
+    if (input.type === 'text' && (input.dataset.field === 'value' || input.dataset.field === 'expectedValue')) {
+      attachStepAutocomplete(input, step, input.dataset.field);
+      updateInputVariableVisuals(input);
+      input.addEventListener('input', () => updateInputVariableVisuals(input));
+    }
     input.addEventListener('change', (e) => {
       pushState();
       if (e.target.dataset.field === 'wait') {
@@ -1947,6 +2676,60 @@ function showInfoDialog({ title, confirmLabel, initialValue, atIndex }, onConfir
 }
 
 function bindGlobalEvents() {
+  // ── Flow Settings & Variables Event Listeners ──
+  if (els.btnFlowSettings) els.btnFlowSettings.addEventListener('click', () => openSettingsModal('general'));
+  if (els.btnCloseSettingsModal) els.btnCloseSettingsModal.addEventListener('click', closeSettingsModal);
+  if (els.btnDoneSettings) els.btnDoneSettings.addEventListener('click', closeSettingsModal);
+
+  if (els.tabBtnGeneral) els.tabBtnGeneral.addEventListener('click', () => switchSettingsTab('general'));
+  if (els.tabBtnVariables) els.tabBtnVariables.addEventListener('click', () => switchSettingsTab('variables'));
+
+  if (els.headerSettingsSummary) {
+    els.headerSettingsSummary.addEventListener('click', () => openSettingsModal('general'));
+  }
+  if (els.pillVarCount) {
+    els.pillVarCount.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSettingsModal('variables');
+    });
+  }
+
+  if (els.flowSettingsModal) {
+    els.flowSettingsModal.addEventListener('click', (e) => {
+      if (e.target === els.flowSettingsModal) closeSettingsModal();
+    });
+  }
+
+  if (els.btnFlowVariables) els.btnFlowVariables.addEventListener('click', openVariablesModal);
+  if (els.btnCloseVarsModal) els.btnCloseVarsModal.addEventListener('click', closeVariablesModal);
+  if (els.btnOpenAddVar) els.btnOpenAddVar.addEventListener('click', openAddVariableForm);
+  if (els.btnEmptyAddVar) els.btnEmptyAddVar.addEventListener('click', openAddVariableForm);
+  if (els.btnCancelVarForm) els.btnCancelVarForm.addEventListener('click', closeVariableForm);
+  if (els.btnDiscardVar) els.btnDiscardVar.addEventListener('click', closeVariableForm);
+  if (els.btnSaveVar) els.btnSaveVar.addEventListener('click', saveVariableFromForm);
+  if (els.btnRefreshPreview) els.btnRefreshPreview.addEventListener('click', updateFormLivePreview);
+  if (els.stepVarManageBtn) els.stepVarManageBtn.addEventListener('click', () => { hideStepAutocomplete(); openVariablesModal(); });
+
+  document.addEventListener('pointerdown', (e) => {
+    if (els.stepVarAutocomplete && !els.stepVarAutocomplete.classList.contains('hidden')) {
+      if (!els.stepVarAutocomplete.contains(e.target) && (!activeAutocompleteInput || e.target !== activeAutocompleteInput)) {
+        hideStepAutocomplete();
+      }
+    }
+  });
+
+  if (els.flowVariablesModal) {
+    els.flowVariablesModal.addEventListener('click', (e) => {
+      if (e.target === els.flowVariablesModal) closeVariablesModal();
+    });
+  }
+
+  [els.varInputName, els.varInputLength, els.varInputPrefix, els.varInputSuffix].forEach((input) => {
+    if (input) input.addEventListener('input', updateFormLivePreview);
+  });
+  if (els.varInputType) els.varInputType.addEventListener('change', updateFormLivePreview);
+  if (els.varInputCharset) els.varInputCharset.addEventListener('change', updateFormLivePreview);
+
   els.flowName.addEventListener('change', (e) => { state.flowName = e.target.value; scheduleAutoSave(); });
   els.defaultWait.addEventListener('change', (e) => { state.defaultWait = e.target.value; scheduleAutoSave(); });
   els.urlChangeWait.addEventListener('change', (e) => { state.urlChangeWait = parseInt(e.target.value, 10) || 2000; scheduleAutoSave(); });
@@ -2044,6 +2827,7 @@ function bindGlobalEvents() {
         name: state.flowName,
         description: 'Recorded Flow',
         containsComp: true,
+        variables: state.variables || {},
         flowItems: flowItems
       };
 
@@ -2086,6 +2870,7 @@ function bindGlobalEvents() {
       defaultWait: (parseFloat(state.defaultWait) || 5) * 1000,
       urlChangeWait: parseInt(state.urlChangeWait, 10) || 2000,
       status: 'DRAFT',
+      variables: state.variables || {},
       steps: state.steps.map(mapLocalStepToBackend),
       version: state.version !== undefined ? state.version : null
     };

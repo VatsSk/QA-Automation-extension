@@ -295,6 +295,8 @@
       let text = '';
       if (tag === 'input') {
         text = (el.value || '').trim();
+        // Never embed dynamic variable references into selectors
+        if (text.startsWith('#')) return;
       } else {
         text = (el.textContent || '').replace(/[ \t\r\n]+/g, ' ').trim();
       }
