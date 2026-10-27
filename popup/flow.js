@@ -152,8 +152,9 @@ async function getModules() {
     return [];
   }
   try {
-    const modules = await window.components.listModules(state.projectId, state.authToken);
-    _cachedModules = Array.isArray(modules) ? modules : [];
+    const res = await window.components.listModules(state.projectId, state.authToken);
+    const modules = Array.isArray(res) ? res : (res?.data || res?.modules || []);
+    _cachedModules = modules;
     return _cachedModules;
   } catch (err) {
     console.error('[Flow] Failed to list component modules:', err);
@@ -171,8 +172,9 @@ async function getComponentsForModule(moduleId) {
   }
   if (!state.projectId) return [];
   try {
-    const comps = await window.components.listComponents(state.projectId, moduleId, state.authToken);
-    _cachedComponentsByModule[moduleId] = Array.isArray(comps) ? comps : [];
+    const res = await window.components.listComponents(state.projectId, moduleId, state.authToken);
+    const comps = Array.isArray(res) ? res : (res?.data || res?.components || []);
+    _cachedComponentsByModule[moduleId] = comps;
     return _cachedComponentsByModule[moduleId];
   } catch (err) {
     console.error('[Flow] Failed to list components for module ' + moduleId + ':', err);
@@ -181,14 +183,37 @@ async function getComponentsForModule(moduleId) {
 }
 function mapFlowItemToLocalStep(item, idx) {
   if (item.type === 'COMPONENT') {
+    const compObj = item.component || item.comp || {};
+    const compId = item.componentId ||
+                   item.compId ||
+                   item.component_id ||
+                   item.partCompId ||
+                   (typeof item.component === 'string' ? item.component : (compObj.id || compObj._id || ''));
+    const modId = item.moduleId ||
+                  item.compModuleId ||
+                  item.module_id ||
+                  (typeof item.compModule === 'string' ? item.compModule : (compObj.moduleId || compObj.compModuleId || ''));
+    const compName = item.componentName ||
+                     item.compName ||
+                     item.name ||
+                     (typeof compObj === 'object' ? compObj.name : '') ||
+                     '';
+    const modName = item.moduleName ||
+                    item.compModuleName ||
+                    (typeof compObj === 'object' ? compObj.moduleName : '') ||
+                    '';
+    const compDesc = item.description ||
+                     item.compDesc ||
+                     (typeof compObj === 'object' ? compObj.description : '') ||
+                     '';
     return {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 5) + idx,
       type: 'COMPONENT',
-      componentId: item.componentId || item.compId || '',
-      moduleId: item.moduleId || item.compModuleId || '',
-      componentName: item.componentName || item.name || '',
-      moduleName: item.moduleName || '',
-      description: item.description || '',
+      componentId: compId,
+      moduleId: modId,
+      componentName: compName,
+      moduleName: modName,
+      description: compDesc,
       isReadOnly: true // Components inside an existing flow are read-only
     };
   } else {
@@ -196,33 +221,34 @@ function mapFlowItemToLocalStep(item, idx) {
   }
 }
 async function loadSession() {
-  const data = await chrome.storage.local.get(['projectId', 'moduleId', 'flowId', 'version', 'createdAt', 'existingFlow', 'createdBy', 'url', 'authToken', 'flow_draft']);
-  state.projectId = data.projectId || data.existingFlow?.projectId || null;
-  state.moduleId = data.moduleId || data.existingFlow?.moduleId || null;
+  const data = await chrome.storage.local.get(['projectId', 'moduleId', 'flowId', 'version', 'createdAt', 'existingFlow', 'createdBy', 'url', 'authToken', 'flow_draft', 'flowItems']);
+  state.projectId = data.projectId || data.existingFlow?.projectId || data.existingFlow?.project_id || null;
+  state.moduleId = data.moduleId || data.existingFlow?.moduleId || data.existingFlow?.flowModuleId || null;
   state.flowId = data.flowId || data.existingFlow?.flowId || data.existingFlow?.id || data.existingFlow?._id || null;
   state.version = data.version ?? (data.existingFlow ? data.existingFlow.version : null) ?? null;
   state.createdAt = data.createdAt ?? (data.existingFlow ? data.existingFlow.createdAt : null) ?? null;
   state.createdBy = data.createdBy ?? (data.existingFlow ? data.existingFlow.createdBy : null) ?? null;
   state.loginUrl = data.url;
-  state.authToken = data.authToken;
+  state.authToken = data.authToken || data.existingFlow?.authToken || data.existingFlow?.token || null;
 
-  // If a local draft exists for this same project/module, restore it
+  // If a local draft exists for this EXACT same flow, restore it; otherwise do not overwrite existingFlow
   const draft = data.flow_draft;
   if (
     draft &&
-    draft.projectId === data.projectId &&
-    draft.moduleId === data.moduleId
+    draft.projectId === state.projectId &&
+    draft.moduleId === state.moduleId &&
+    ((state.flowId && draft.flowId === state.flowId) || (!state.flowId && !draft.flowId && !data.existingFlow))
   ) {
     state.flowName = draft.flowName || 'New Flow';
     state.defaultWait = draft.defaultWait ?? 5;
     state.urlChangeWait = draft.urlChangeWait ?? 2000;
     state.steps = draft.steps || [];
     state.variables = draft.variables || {};
-    state.flowId = draft.flowId || data.flowId;
+    state.flowId = draft.flowId || state.flowId;
     if (draft.version !== undefined) state.version = draft.version;
     if (draft.createdAt !== undefined) state.createdAt = draft.createdAt;
     if (draft.createdBy !== undefined) state.createdBy = draft.createdBy;
-    return; // draft wins — don't overwrite with existingFlow
+    return;
   }
 
   if (data.existingFlow) {
@@ -236,32 +262,47 @@ async function loadSession() {
 
     let loadedFromBlueprint = false;
 
-    // Strategy 1: Does existingFlow directly provide flowItems?
-    const directItems = data.existingFlow.flowItems || data.existingFlow.data?.flowItems;
+    // Strategy 1: Check existingFlow directly for flowItems in all possible fields and formats
+    let directItems = data.existingFlow.flowItems ||
+                      data.existingFlow.flow_items ||
+                      data.existingFlow.flowInfo?.flowItems ||
+                      data.existingFlow.flow_info?.flowItems ||
+                      data.existingFlow.blueprint?.flowItems ||
+                      data.existingFlow.data?.flowItems ||
+                      data.existingFlow.data?.flow_items ||
+                      data.flowItems;
+    if (typeof directItems === 'string') {
+      try { directItems = JSON.parse(directItems); } catch {}
+    }
     if (Array.isArray(directItems) && directItems.length > 0) {
-      console.log('[Flow] Loading from direct existingFlow.flowItems:', directItems.length);
+      console.log('[Flow] Loading from direct flowItems:', directItems.length);
       state.steps = directItems.map((item, idx) => mapFlowItemToLocalStep(item, idx));
       loadedFromBlueprint = true;
     }
 
-    // Strategy 2: If we have a flowId, always fetch the flow-info blueprint from API
+    // Strategy 2: If we have a flowId, fetch the flow-info blueprint from API
     if (!loadedFromBlueprint && state.flowId) {
       try {
         console.log('[Flow] Fetching blueprint from /api/components/flow-info/' + state.flowId);
         const res = await window.components.getFlowInfo(state.flowId, state.authToken);
-        const blueprint = res?.data || res;
-        const blueprintItems = blueprint?.flowItems || blueprint?.flow_items;
-        if (Array.isArray(blueprintItems) && blueprintItems.length > 0) {
-          console.log('[Flow] Successfully fetched blueprint with', blueprintItems.length, 'flowItems');
-          state.steps = blueprintItems.map((item, idx) => mapFlowItemToLocalStep(item, idx));
-          loadedFromBlueprint = true;
+        if (res) {
+          const blueprint = res.data || res;
+          let blueprintItems = blueprint.flowItems || blueprint.flow_items;
+          if (typeof blueprintItems === 'string') {
+            try { blueprintItems = JSON.parse(blueprintItems); } catch {}
+          }
+          if (Array.isArray(blueprintItems) && blueprintItems.length > 0) {
+            console.log('[Flow] Successfully fetched blueprint with', blueprintItems.length, 'flowItems');
+            state.steps = blueprintItems.map((item, idx) => mapFlowItemToLocalStep(item, idx));
+            loadedFromBlueprint = true;
+          }
         }
       } catch (err) {
         console.warn('[Flow] Could not fetch flow-info blueprint:', err.message);
       }
     }
 
-    // Strategy 3: Check if existingFlow.steps contains flattened component steps (isPartComp: true)
+    // Strategy 3: Check if existingFlow.steps contains flattened component steps (isPartComp: true or isComp: true)
     if (!loadedFromBlueprint && Array.isArray(data.existingFlow.steps)) {
       const hasPartComp = data.existingFlow.steps.some(s => s.isPartComp || s.isComp);
       if (hasPartComp) {
@@ -272,14 +313,37 @@ async function loadSession() {
         for (let idx = 0; idx < data.existingFlow.steps.length; idx++) {
           const bStep = data.existingFlow.steps[idx];
           if (bStep.isPartComp || bStep.isComp) {
-            const compId = bStep.componentId || bStep.compId || bStep.component_id || '';
-            const compName = bStep.componentName || bStep.compName || '';
-            const modId = bStep.moduleId || bStep.compModuleId || '';
+            const compObj = bStep.component || bStep.comp || {};
+            const compId = bStep.componentId ||
+                           bStep.compId ||
+                           bStep.component_id ||
+                           bStep.partCompId ||
+                           bStep.partComponentId ||
+                           (typeof bStep.component === 'string' ? bStep.component : (compObj.id || compObj._id || ''));
+            const compName = bStep.componentName ||
+                             bStep.compName ||
+                             (typeof compObj === 'object' ? compObj.name : '') ||
+                             '';
+            const modId = bStep.compModuleId ||
+                          bStep.componentModuleId ||
+                          (typeof bStep.compModule === 'string' ? bStep.compModule : (compObj.moduleId || compObj.compModuleId || '')) ||
+                          (bStep.moduleId && bStep.moduleId !== state.moduleId ? bStep.moduleId : '');
+            const modName = bStep.moduleName ||
+                            bStep.compModuleName ||
+                            (typeof compObj === 'object' ? compObj.moduleName : '') ||
+                            '';
+            const compDesc = bStep.description ||
+                             bStep.compDesc ||
+                             (typeof compObj === 'object' ? compObj.description : '') ||
+                             '';
 
             // If we are already grouping into the same component
             if (activeCompStep && (activeCompStep.componentId === compId || !compId)) {
+              if (!activeCompStep.componentId && compId) activeCompStep.componentId = compId;
               if (!activeCompStep.componentName && compName) activeCompStep.componentName = compName;
               if (!activeCompStep.moduleId && modId) activeCompStep.moduleId = modId;
+              if (!activeCompStep.moduleName && modName) activeCompStep.moduleName = modName;
+              if (!activeCompStep.description && compDesc) activeCompStep.description = compDesc;
               continue;
             }
 
@@ -290,6 +354,8 @@ async function loadSession() {
               componentId: compId,
               componentName: compName,
               moduleId: modId,
+              moduleName: modName,
+              description: compDesc,
               isReadOnly: true
             };
             reconstructed.push(activeCompStep);
@@ -2225,7 +2291,13 @@ function createComponentStepCard(step, index) {
     moduleSelect.disabled = true;
     moduleSelect.title = 'Component module is read-only';
   }
-  moduleSelect.innerHTML = '<option value="">Select Module...</option>';
+  if (step.moduleId && step.moduleName) {
+    moduleSelect.innerHTML = `<option value="${step.moduleId}" selected>${formatDropdownText(step.moduleName, 46)}</option>`;
+  } else if (step.moduleId) {
+    moduleSelect.innerHTML = `<option value="${step.moduleId}" selected>${formatDropdownText(`Module (${step.moduleId})`, 46)}</option>`;
+  } else {
+    moduleSelect.innerHTML = '<option value="">Select Module...</option>';
+  }
   modRow.appendChild(moduleSelect);
 
   // Component Row
@@ -2241,7 +2313,13 @@ function createComponentStepCard(step, index) {
   } else {
     compSelect.disabled = !step.moduleId;
   }
-  compSelect.innerHTML = `<option value="">${step.moduleId ? 'Loading components...' : 'Select a module first...'}</option>`;
+  if (step.componentId && step.componentName) {
+    compSelect.innerHTML = `<option value="${step.componentId}" selected>${formatDropdownText(step.componentName, 46)}</option>`;
+  } else if (step.componentId) {
+    compSelect.innerHTML = `<option value="${step.componentId}" selected>${formatDropdownText(`Component (${step.componentId})`, 46)}</option>`;
+  } else {
+    compSelect.innerHTML = `<option value="">${step.moduleId ? 'Loading components...' : 'Select a module first...'}</option>`;
+  }
   compRow.appendChild(compSelect);
 
   // Description row
@@ -2308,51 +2386,118 @@ function formatDropdownText(text, maxLen = 46) {
 async function populateComponentCardDropdowns(step, moduleSelect, compSelect, badge, metaRow, metaText) {
   const modules = await getModules();
 
-  // Auto-resolve moduleId if componentId is set but moduleId is missing
-  if (step.componentId && !step.moduleId && modules.length > 0) {
+  const modExists = modules.some(m => String(m.id || m._id) === String(step.moduleId));
+
+  // Auto-resolve moduleId if componentId is set but moduleId is missing or doesn't match any component module
+  if (step.componentId && (!step.moduleId || !modExists) && modules.length > 0) {
     for (const mod of modules) {
       const modId = mod.id || mod._id;
       const comps = await getComponentsForModule(modId);
-      const found = comps.find(c => (c.id || c._id) === step.componentId);
+      const found = comps.find(c => String(c.id || c._id) === String(step.componentId) || (step.componentName && c.name === step.componentName));
       if (found) {
         step.moduleId = modId;
         step.moduleName = mod.name;
-        step.componentName = found.name;
+        step.componentId = found.id || found._id;
+        if (!step.componentName) step.componentName = found.name;
         const stepCount = Array.isArray(found.steps) ? found.steps.length : (found.stepCount || 0);
-        step.description = found.description || (stepCount ? `${stepCount} steps` : '');
+        if (!step.description) step.description = found.description || (stepCount ? `${stepCount} steps` : '');
         break;
       }
     }
   }
 
+  // Auto-resolve by componentName if componentId is missing
+  if (!step.componentId && step.componentName && modules.length > 0) {
+    for (const mod of modules) {
+      const modId = mod.id || mod._id;
+      const comps = await getComponentsForModule(modId);
+      const found = comps.find(c => c.name === step.componentName);
+      if (found) {
+        step.moduleId = modId;
+        step.moduleName = mod.name;
+        step.componentId = found.id || found._id;
+        const stepCount = Array.isArray(found.steps) ? found.steps.length : (found.stepCount || 0);
+        if (!step.description) step.description = found.description || (stepCount ? `${stepCount} steps` : '');
+        break;
+      }
+    }
+  }
+
+  // If moduleId is set but moduleName is missing, resolve it from modules
+  if (step.moduleId && !step.moduleName && modules.length > 0) {
+    const mod = modules.find(m => String(m.id || m._id) === String(step.moduleId));
+    if (mod) step.moduleName = mod.name;
+  }
+
+  // If componentId & moduleId are set but componentName is missing, resolve it from comps
+  if (step.moduleId && step.componentId && !step.componentName) {
+    const comps = await getComponentsForModule(step.moduleId);
+    const found = comps.find(c => String(c.id || c._id) === String(step.componentId));
+    if (found) {
+      step.componentName = found.name;
+      const stepCount = Array.isArray(found.steps) ? found.steps.length : (found.stepCount || 0);
+      if (!step.description) step.description = found.description || (stepCount ? `${stepCount} steps` : '');
+    }
+  }
+
+  // 1. Populate Module dropdown
   moduleSelect.innerHTML = '<option value="">Select Module...</option>';
   if (modules.length === 0) {
     moduleSelect.innerHTML = '<option value="">No component modules found</option>';
   }
+  let matchedMod = false;
   modules.forEach(m => {
     const modId = m.id || m._id;
     const opt = document.createElement('option');
     opt.value = modId;
     opt.textContent = formatDropdownText(m.name, 46);
     opt.title = m.name;
-    if (modId === step.moduleId) {
+    if (String(modId) === String(step.moduleId)) {
       opt.selected = true;
+      matchedMod = true;
+      step.moduleName = m.name;
       moduleSelect.title = m.name;
     }
     moduleSelect.appendChild(opt);
   });
 
-  if (step.isReadOnly) {
-    moduleSelect.disabled = true;
-    compSelect.disabled = true;
-  } else if (step.moduleId) {
-    compSelect.disabled = false;
+  // Fallback: if step has moduleId but it wasn't in modules list, add a fallback option
+  if (!matchedMod && step.moduleId) {
+    const fallbackModOpt = document.createElement('option');
+    fallbackModOpt.value = step.moduleId;
+    const label = step.moduleName || `Module (${step.moduleId})`;
+    fallbackModOpt.textContent = formatDropdownText(label, 46);
+    fallbackModOpt.title = label;
+    fallbackModOpt.selected = true;
+    moduleSelect.appendChild(fallbackModOpt);
+    moduleSelect.title = label;
+  } else if (!step.moduleId && step.componentId) {
+    // If moduleId is missing but componentId is present
+    const fallbackModOpt = document.createElement('option');
+    fallbackModOpt.value = "";
+    const shortId = typeof step.componentId === 'string' && step.componentId.length > 8 ? step.componentId.substring(0, 8) + '…' : step.componentId;
+    const label = step.moduleName || `Mapped (${shortId})`;
+    fallbackModOpt.textContent = formatDropdownText(label, 46);
+    fallbackModOpt.title = label;
+    fallbackModOpt.selected = true;
+    moduleSelect.appendChild(fallbackModOpt);
+    moduleSelect.title = label;
+  }
+
+  // Explicitly sync moduleSelect.value
+  if (step.moduleId) {
+    moduleSelect.value = String(step.moduleId);
+  }
+
+  // 2. Populate Component dropdown
+  if (step.moduleId) {
     compSelect.innerHTML = '<option value="">Loading components...</option>';
     const comps = await getComponentsForModule(step.moduleId);
     compSelect.innerHTML = '<option value="">Select Component...</option>';
     if (comps.length === 0) {
       compSelect.innerHTML = '<option value="">No components in this module</option>';
     }
+    let matchedComp = false;
     comps.forEach(c => {
       const cId = c.id || c._id;
       const opt = document.createElement('option');
@@ -2366,26 +2511,67 @@ async function populateComponentCardDropdowns(step, moduleSelect, compSelect, ba
         : c.name;
       opt.textContent = displayName + countSuffix;
       opt.title = fullLabel + (c.description ? ` - ${c.description}` : '');
-      if (cId === step.componentId) {
+      if (String(cId) === String(step.componentId) || (step.componentName && c.name === step.componentName)) {
         opt.selected = true;
+        matchedComp = true;
         compSelect.title = fullLabel;
+        if (!step.componentId) step.componentId = cId;
         if (!step.componentName) step.componentName = c.name;
         if (!step.description) step.description = c.description || (stepCount ? `${stepCount} steps` : '');
       }
       compSelect.appendChild(opt);
     });
 
-    if (step.componentName) {
-      badge.textContent = step.componentName;
-      badge.title = step.componentName;
-      badge.style.display = 'inline-block';
-      metaText.textContent = step.description ? `${step.description}` : 'Reusable component';
-      metaText.title = metaText.textContent;
-      metaRow.style.display = 'flex';
+    // Fallback: if step has componentId but not found in comps list
+    if (!matchedComp && step.componentId) {
+      const fallbackCompOpt = document.createElement('option');
+      fallbackCompOpt.value = step.componentId;
+      const label = step.componentName || `Component (${step.componentId})`;
+      fallbackCompOpt.textContent = formatDropdownText(label, 46);
+      fallbackCompOpt.title = label;
+      fallbackCompOpt.selected = true;
+      compSelect.appendChild(fallbackCompOpt);
+      compSelect.title = label;
     }
+
+    // Explicitly sync compSelect.value
+    if (step.componentId) {
+      compSelect.value = String(step.componentId);
+    }
+  } else if (step.componentId) {
+    // If moduleId is missing but componentId is present, ensure component is selected and displayed
+    compSelect.innerHTML = '';
+    const fallbackCompOpt = document.createElement('option');
+    fallbackCompOpt.value = step.componentId;
+    const label = step.componentName || `Component (${step.componentId})`;
+    fallbackCompOpt.textContent = formatDropdownText(label, 46);
+    fallbackCompOpt.title = label;
+    fallbackCompOpt.selected = true;
+    compSelect.appendChild(fallbackCompOpt);
+    compSelect.value = String(step.componentId);
+    compSelect.title = label;
   } else {
-    compSelect.disabled = true;
     compSelect.innerHTML = '<option value="">Select a module first...</option>';
+  }
+
+  // 3. Update Badge and Details row
+  if (step.componentName || step.componentId) {
+    const shortId = typeof step.componentId === 'string' && step.componentId.length > 8 ? step.componentId.substring(0, 8) + '…' : (step.componentId || '');
+    badge.textContent = step.componentName || `Component (${shortId})`;
+    badge.title = step.componentName || step.componentId || 'Component';
+    badge.style.display = 'inline-block';
+    metaText.textContent = step.description ? `${step.description}` : (step.componentName ? 'Reusable component' : `Mapped Component ID: ${step.componentId}`);
+    metaText.title = metaText.textContent;
+    metaRow.style.display = 'flex';
+  }
+
+  // 3. Set disabled state based on isReadOnly or missing moduleId
+  if (step.isReadOnly) {
+    moduleSelect.disabled = true;
+    compSelect.disabled = true;
+  } else {
+    moduleSelect.disabled = false;
+    compSelect.disabled = !step.moduleId;
   }
 
   if (step.isReadOnly) return; // Prevent editing when component is read-only
@@ -2806,7 +2992,11 @@ function bindGlobalEvents() {
           return {
             order: order,
             type: 'COMPONENT',
-            componentId: step.componentId
+            componentId: step.componentId,
+            componentName: step.componentName || '',
+            moduleId: step.moduleId || '',
+            moduleName: step.moduleName || '',
+            description: step.description || ''
           };
         } else {
           const backendStep = mapLocalStepToBackend(step, idx);

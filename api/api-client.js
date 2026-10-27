@@ -147,7 +147,13 @@ const request = async (method, endpoint, data, authToken) => {
         const err = await res.text();
         throw new Error(`API ${res.status}: ${err}`);
     }
-    return res.json();
+    const text = await res.text();
+    if (!text || !text.trim()) return null;
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
 };
 
 const components = {

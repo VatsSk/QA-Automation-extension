@@ -254,14 +254,14 @@ chrome.runtime.onMessageExternal.addListener(
         const launchNewSession = () => {
           const launchMode = msg.flag || msg.mode || 'RUN';
           const sessionData = {
-            projectId: msg.projectId || msg.existingFlow?.projectId || null,
+            projectId: msg.projectId || msg.existingFlow?.projectId || msg.existingFlow?.project_id || null,
             createdBy: msg.createdBy || msg.existingFlow?.createdBy || null,
             url: msg.url || msg.existingFlow?.url || null,
             mode: launchMode
           };
 
-          if (msg.authToken || msg.token || msg.existingFlow?.authToken) {
-            sessionData.authToken = msg.authToken || msg.token || msg.existingFlow?.authToken;
+          if (msg.authToken || msg.token || msg.accessToken || msg.existingFlow?.authToken || msg.existingFlow?.token || msg.existingFlow?.accessToken) {
+            sessionData.authToken = msg.authToken || msg.token || msg.accessToken || msg.existingFlow?.authToken || msg.existingFlow?.token || msg.existingFlow?.accessToken;
           }
 
           if (launchMode === 'COMPONENT' || launchMode === 'EDIT_COMPONENT') {
@@ -280,9 +280,19 @@ chrome.runtime.onMessageExternal.addListener(
               };
             }
           } else if (launchMode === 'FLOW') {
-            sessionData.moduleId = msg.moduleId || msg.existingFlow?.moduleId || null;
+            sessionData.moduleId = msg.moduleId || msg.existingFlow?.moduleId || msg.flowModuleId || msg.existingFlow?.flowModuleId || null;
             sessionData.flowId = msg.flowId || msg.existingFlow?.flowId || msg.existingFlow?.id || msg.existingFlow?._id || null;
             sessionData.existingFlow = msg.existingFlow || null;
+            if (msg.flowItems || msg.existingFlow?.flowItems) {
+              const items = msg.flowItems || msg.existingFlow?.flowItems;
+              sessionData.flowItems = items;
+              if (sessionData.existingFlow) sessionData.existingFlow.flowItems = items;
+            }
+            if (msg.flow_items || msg.existingFlow?.flow_items) {
+              const items = msg.flow_items || msg.existingFlow?.flow_items;
+              sessionData.flowItems = items;
+              if (sessionData.existingFlow) sessionData.existingFlow.flow_items = items;
+            }
             sessionData.version = msg.version ?? (msg.existingFlow ? msg.existingFlow.version : null) ?? null;
             sessionData.createdAt = msg.createdAt ?? (msg.existingFlow ? msg.existingFlow.createdAt : null) ?? null;
             if (!sessionData.createdBy && (msg.existingFlow?.createdBy || msg.createdBy)) {
