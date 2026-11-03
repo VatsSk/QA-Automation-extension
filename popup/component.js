@@ -473,6 +473,7 @@ function mapLocalStepToBackend(step, index) {
       name: `Step ${index + 1}`,
       actionType: 'URL_CHANGE',
       url: step.url,
+      description: step.description || '',
       wait: step.wait != null ? step.wait : 2000
     };
   }
@@ -487,6 +488,7 @@ function mapLocalStepToBackend(step, index) {
     expectedValue: isVerify ? step.value : null,
     textSource: step.textSource || null,
     attribute: step.verificationType === 'Alt Text' ? 'alt' : null,
+    description: step.description || '',
     overrideWait: !!(step.advanced && step.advanced.overrideWait),
     wait: (step.advanced && step.advanced.overrideWait) ? (parseInt(step.advanced.overrideWait) * 1000) : null,
     retryCount: (step.advanced && parseInt(step.advanced.retryCount)) || 0,
@@ -508,7 +510,7 @@ function mapBackendStepToLocal(bStep) {
   };
 
   // ── INFO step — restore documentation step from backend ───────────────────
-  if ((bStep.actionType || '').toUpperCase() === 'INFO') {
+  if ((bStep.actionType || bStep.type || '').toUpperCase() === 'INFO') {
     return {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
       type: 'INFO',
@@ -878,6 +880,7 @@ function createInserterRow(atIndex) {
         description: text
       };
       state.steps.splice(atIndex, 0, step);
+      _captureInsertIndex = atIndex + 1;
       scheduleAutoSave();
       render();
       scrollToStep(step.id);
@@ -1167,6 +1170,7 @@ function createInfoStepCard(step, index) {
     pushState();
     const copy = { id: Date.now().toString() + Math.random().toString(36).substr(2, 5), type: 'INFO', description: step.description };
     state.steps.splice(index + 1, 0, copy);
+    _captureInsertIndex = index + 2;
     scheduleAutoSave();
     render();
     scrollToStep(copy.id);
