@@ -92,7 +92,40 @@
     });
   }
 
+  function isDropdownOption(el) {
+    if (!el || !el.getAttribute) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'button') return false;
+
+    // 1. Native option tag
+    if (tag === 'option') return true;
+
+    // 2. ARIA role="option" (used across Bootstrap-Select, Material UI, AntD, PrimeNG)
+    if (el.getAttribute('role') === 'option') return true;
+
+    // 3. Dropdown list items inside listbox or dropdown menu
+    if (el.classList && (
+      el.classList.contains('select2-results__option') ||
+      el.classList.contains('mat-option') ||
+      el.classList.contains('ant-select-item-option')
+    )) return true;
+
+    // 4. Contained within a listbox or inner dropdown-menu list (e.g. Bootstrap-Select)
+    if (el.closest) {
+      const listbox = el.closest('[role="listbox"], ul.dropdown-menu.inner, .select2-results');
+      if (listbox && (tag === 'li' || tag === 'a' || tag === 'span' || tag === 'div')) {
+        if (!el.closest('.bs-searchbox')) return true;
+      }
+    }
+
+    return false;
+  }
+
   window.LocatorGenerator = {
+
+    isDropdownOption(el) {
+      return isDropdownOption(el);
+    },
 
     // Returns { bestLocator, confidence, locators: [{type,value,score,note}] }
     generate(el) {
@@ -304,6 +337,12 @@
       if (!text || text.length > 80) return;
       if (!['button', 'a', 'label', 'span', 'li', 'input'].includes(tag)) return;
 
+      const isDropdown = isDropdownOption(el);
+      // For dropdown options, deprioritize text locators below CSS (Score 80)
+      // to keep locators loosely coupled to structure instead of dynamic text.
+      const exactScore = isDropdown ? 65 : 85;
+      const classScore = isDropdown ? 68 : 87;
+
       // Exact text match
       let xpath;
       if (tag === 'input') {
@@ -316,7 +355,7 @@
         candidates.push({ 
           type: 'text-exact', 
           value: xpath, 
-          score: 85, 
+          score: exactScore, 
           note: `By exact text: "${text.slice(0, 40)}${text.length > 40 ? '...' : ''}"` 
         });
       }
@@ -339,7 +378,7 @@
           candidates.push({ 
             type: 'text+class', 
             value: xpath2, 
-            score: 87, 
+            score: classScore, 
             note: `Text with class: "${text.slice(0, 30)}${text.length > 30 ? '...' : ''}"` 
           });
         }
