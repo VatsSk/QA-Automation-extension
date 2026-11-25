@@ -320,13 +320,19 @@
   // Walk up the DOM to find the nearest meaningful interactive element.
   // Returns null if nothing interactive is found — plain text is ignored.
   function findInteractiveAncestor(el) {
+    if (!el) return null;
+
+    // If inside a contenteditable editor or custom textbox, resolve to that container
+    const editableAncestor = el.closest?.('[contenteditable="true"], [role="textbox"], .note-editable');
+    if (editableAncestor) return editableAncestor;
+
     const interactiveTags = new Set(['input', 'select', 'textarea', 'button', 'a', 'li', 'label']);
     let node = el;
     for (let i = 0; i < 6 && node && node !== document.body; i++) {
       const tag = node.tagName.toLowerCase();
       if (interactiveTags.has(tag)) return node;
       const role = node.getAttribute('role');
-      if (role && ['button', 'checkbox', 'radio', 'link', 'tab', 'menuitem', 'option', 'switch'].includes(role)) return node;
+      if (role && ['button', 'checkbox', 'radio', 'link', 'tab', 'menuitem', 'option', 'switch', 'textbox'].includes(role)) return node;
       // Check for clickable attributes
       if (node.onclick || node.getAttribute('ng-click') || node.getAttribute('@click') || node.getAttribute('data-action')) return node;
       
@@ -364,6 +370,14 @@
     if (tag === 'select')   return { action: 'select', value: el.options?.[el.selectedIndex]?.text || el.value || '' };
     if (tag === 'button')   return { action: 'click', value: '' };
     if (tag === 'a')        return { action: 'click', value: '' };
+
+    // Rich text / contenteditable editors or custom textboxes (e.g. Summernote, Quill, Draft.js, role="textbox")
+    if (el.isContentEditable || el.getAttribute?.('contenteditable') === 'true' || el.getAttribute?.('role') === 'textbox') {
+      if (el.getAttribute?.('aria-readonly') === 'true' || el.getAttribute?.('contenteditable') === 'false') {
+        return { action: 'click', value: '' };
+      }
+      return { action: 'type', value: (el.innerText || el.textContent || '').trim() };
+    }
 
     // Elements matched by role or click handler
     const role = el.getAttribute('role');

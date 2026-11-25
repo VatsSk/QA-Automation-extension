@@ -536,9 +536,10 @@ function showStuckTabBanner(tabRef, tabId) {
     timeline.parentNode.insertBefore(banner, timeline);
   }
   banner.innerHTML = `
-    ${tabRef} hasn't finished loading — recording will continue if you switch back to another tab.
-    <button style="margin-left:8px;background:rgba(0,0,0,0.2);border:none;color:#fff;padding:2px 6px;cursor:pointer;border-radius:3px" onclick="this.parentNode.remove()">Dismiss</button>
+    <span>${tabRef} hasn't finished loading — recording will continue if you switch back to another tab.</span>
+    <button class="stuck-tab-dismiss-btn" style="margin-left:8px;background:rgba(0,0,0,0.2);border:none;color:#fff;padding:2px 6px;cursor:pointer;border-radius:3px">Dismiss</button>
   `;
+  banner.querySelector('.stuck-tab-dismiss-btn')?.addEventListener('click', () => banner.remove());
 }
 
 // Mock keydown for Ctrl+V globally to enter verification mode
@@ -2902,6 +2903,13 @@ function bindGlobalEvents() {
   if (els.btnCancelVarForm) els.btnCancelVarForm.addEventListener('click', closeVariableForm);
   if (els.btnDiscardVar) els.btnDiscardVar.addEventListener('click', closeVariableForm);
   if (els.btnSaveVar) els.btnSaveVar.addEventListener('click', saveVariableFromForm);
+  const varForm = document.getElementById('var-form');
+  if (varForm) {
+    varForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveVariableFromForm();
+    });
+  }
   if (els.btnRefreshPreview) els.btnRefreshPreview.addEventListener('click', updateFormLivePreview);
   if (els.stepVarManageBtn) els.stepVarManageBtn.addEventListener('click', () => { hideStepAutocomplete(); openVariablesModal(); });
 
